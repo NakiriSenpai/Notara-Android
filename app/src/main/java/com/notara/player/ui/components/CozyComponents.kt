@@ -35,28 +35,38 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.notara.player.ui.i18n.AppLanguage
+import com.notara.player.ui.i18n.LocalNotaraStrings
 import com.notara.player.ui.theme.AppThemePreset
 import java.io.File
 import kotlin.math.abs
 
 private val cozyFallbackPairs = listOf(
-    Color(0xFF4A3525) to Color(0xFF8C5A3C), // Warm Caramel Espresso
-    Color(0xFF2D4035) to Color(0xFF5D8069), // Matcha Sage
-    Color(0xFF4A2E39) to Color(0xFF9E6275), // Dusty Sakura
-    Color(0xFF2E3648) to Color(0xFF5A6D8F), // Midnight Indigo
-    Color(0xFF4A3E2A) to Color(0xFFA68149), // Amber Lamp
-    Color(0xFF39324A) to Color(0xFF7B699E)  // Soft Lavender Dusk
+    Color(0xFF4A3525) to Color(0xFF8C5A3C),
+    Color(0xFF2D4035) to Color(0xFF5D8069),
+    Color(0xFF4A2E39) to Color(0xFF9E6275),
+    Color(0xFF2E3648) to Color(0xFF5A6D8F),
+    Color(0xFF4A3E2A) to Color(0xFFA68149),
+    Color(0xFF39324A) to Color(0xFF7B699E)
 )
 
+/**
+ * 60fps-safe Artwork: menggunakan AsyncImage standar (tanpa SubcomposeAsyncImage)
+ * dengan downsampling ukuran tepat di atas gradien fallback hangat agar list 2.500+ lagu mulus.
+ */
 @Composable
 fun CozyArtwork(
     customCoverPath: String?,
@@ -67,12 +77,17 @@ fun CozyArtwork(
     isPlaylist: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val pairIndex = abs(seedKey.hashCode()) % cozyFallbackPairs.size
+    val context = LocalContext.current
+    val sizePx = with(LocalDensity.current) { sizeDp.dp.roundToPx() }.coerceIn(96, 512)
+    val pairIndex = remember(seedKey) { abs(seedKey.hashCode()) % cozyFallbackPairs.size }
     val (c1, c2) = cozyFallbackPairs[pairIndex]
-    val model: Any? = when {
-        !customCoverPath.isNullOrBlank() && File(customCoverPath).exists() -> File(customCoverPath)
-        albumArtUri != null -> albumArtUri
-        else -> null
+
+    val model: Any? = remember(customCoverPath, albumArtUri) {
+        when {
+            !customCoverPath.isNullOrBlank() && File(customCoverPath).exists() -> File(customCoverPath)
+            albumArtUri != null -> albumArtUri
+            else -> null
+        }
     }
 
     val shape = RoundedCornerShape(cornerDp.dp)
@@ -84,33 +99,29 @@ fun CozyArtwork(
             .border(1.dp, Color.White.copy(alpha = 0.08f), shape),
         contentAlignment = Alignment.Center
     ) {
+        Icon(
+            imageVector = if (isPlaylist) Icons.Rounded.QueueMusic else Icons.Rounded.MusicNote,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.84f),
+            modifier = Modifier.size((sizeDp * 0.42f).coerceIn(18f, 52f).dp)
+        )
+
         if (model != null) {
-            SubcomposeAsyncImage(
-                model = model,
-                contentDescription = "Sampul",
+            val request = remember(model, sizePx) {
+                ImageRequest.Builder(context)
+                    .data(model)
+                    .size(sizePx)
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = request,
+                contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                loading = {
-                    FallbackMusicIcon(isPlaylist = isPlaylist, sizeDp = sizeDp)
-                },
-                error = {
-                    FallbackMusicIcon(isPlaylist = isPlaylist, sizeDp = sizeDp)
-                }
+                modifier = Modifier.fillMaxSize()
             )
-        } else {
-            FallbackMusicIcon(isPlaylist = isPlaylist, sizeDp = sizeDp)
         }
     }
-}
-
-@Composable
-private fun FallbackMusicIcon(isPlaylist: Boolean, sizeDp: Int) {
-    Icon(
-        imageVector = if (isPlaylist) Icons.Rounded.QueueMusic else Icons.Rounded.MusicNote,
-        contentDescription = null,
-        tint = Color.White.copy(alpha = 0.88f),
-        modifier = Modifier.size((sizeDp * 0.44f).coerceIn(18f, 52f).dp)
-    )
 }
 
 @Composable
@@ -142,28 +153,19 @@ fun MiniEqualizerBars(
     val bar1 by transition.animateFloat(
         initialValue = 0.25f,
         targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(420, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "b1"
     )
     val bar2 by transition.animateFloat(
         initialValue = 0.9f,
         targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(520, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "b2"
     )
     val bar3 by transition.animateFloat(
         initialValue = 0.4f,
         targetValue = 0.95f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(360, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(tween(360, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "b3"
     )
 
@@ -191,6 +193,7 @@ fun ThemePickerSheet(
     onSelect: (AppThemePreset) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val strings = LocalNotaraStrings.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -199,16 +202,8 @@ fun ThemePickerSheet(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                text = "Pilih Tema Notara",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Semua tema ringan tanpa efek blur berat, tetap mulus di HP spek rendah.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(strings.chooseThemeTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(strings.chooseThemeSub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
 
             AppThemePreset.entries.forEach { preset ->
@@ -222,7 +217,7 @@ fun ThemePickerSheet(
                         .border(
                             width = if (selected) 1.5.dp else 1.dp,
                             color = if (selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                             shape = RoundedCornerShape(16.dp)
                         )
                         .clickable {
@@ -231,45 +226,74 @@ fun ThemePickerSheet(
                         }
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
                                 .background(preset.previewBg)
                                 .border(2.dp, preset.previewAccent, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(14.dp)
-                                    .clip(CircleShape)
-                                    .background(preset.previewAccent)
-                            )
+                            Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(preset.previewAccent))
                         }
                         Spacer(Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = preset.displayName,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = preset.subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text(preset.displayName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text(preset.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (selected) {
-                            Icon(
-                                imageVector = Icons.Rounded.Check,
-                                contentDescription = "Aktif",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LanguagePickerSheet(
+    currentLanguage: AppLanguage,
+    onSelect: (AppLanguage) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalNotaraStrings.current
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(strings.chooseLanguageTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+
+            AppLanguage.entries.forEach { lang ->
+                val selected = lang == currentLanguage
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onSelect(lang)
+                            onDismiss()
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(lang.nativeName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        if (selected) {
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }

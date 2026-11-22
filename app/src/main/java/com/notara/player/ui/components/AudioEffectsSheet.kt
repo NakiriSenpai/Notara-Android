@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.notara.player.data.model.AudioEffectsState
 import com.notara.player.data.model.EqPreset
 import com.notara.player.data.model.ReverbOption
+import com.notara.player.ui.i18n.LocalNotaraStrings
 import kotlin.math.roundToInt
 
 private val eqLabels = listOf("60 Hz", "230 Hz", "910 Hz", "3.6 kHz", "14 kHz")
@@ -49,6 +50,8 @@ fun AudioEffectsSheet(
     onReverbSelect: (ReverbOption) -> Unit,
     onResetAll: () -> Unit
 ) {
+    val strings = LocalNotaraStrings.current
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -63,23 +66,13 @@ fun AudioEffectsSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Efek Audio & Volume Boost",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = onResetAll) {
-                    Text("Reset")
-                }
+                Text(strings.effectsTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                TextButton(onClick = onResetAll) { Text(strings.resetBtn) }
             }
 
-            // 1. Volume Boost hingga 200%
             Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Volume Booster (0% - 200%)", fontWeight = FontWeight.SemiBold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(strings.volumeBooster, fontWeight = FontWeight.SemiBold)
                     Text(
                         text = "${state.volumePercent}%",
                         fontWeight = FontWeight.Bold,
@@ -92,31 +85,23 @@ fun AudioEffectsSheet(
                     valueRange = 0f..200f
                 )
                 if (state.volumePercent > 130) {
-                    Text(
-                        text = "Boost di atas 130% aktif. Pastikan Limiter menyala agar suara tidak pecah.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFF59E0B)
-                    )
+                    Text(strings.boostWarning, style = MaterialTheme.typography.bodySmall, color = Color(0xFFF59E0B))
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Limiter Anti-Clipping (Android 9+)", style = MaterialTheme.typography.bodyMedium)
+                    Text(strings.limiterLabel, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = state.limiterEnabled, onCheckedChange = onLimiterChange)
                 }
             }
 
             HorizontalDivider()
 
-            // 2. Speed, Pitch, Skip Silence
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Kecepatan Putar (Speed)", fontWeight = FontWeight.SemiBold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(strings.speedLabel, fontWeight = FontWeight.SemiBold)
                     Text("%.2fx".format(state.speed), fontWeight = FontWeight.Medium)
                 }
                 Slider(
@@ -125,11 +110,8 @@ fun AudioEffectsSheet(
                     valueRange = 0.5f..2.0f
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Nada Suara (Pitch)", fontWeight = FontWeight.SemiBold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(strings.pitchLabel, fontWeight = FontWeight.SemiBold)
                     Text("%.2fx".format(state.pitch), fontWeight = FontWeight.Medium)
                 }
                 Slider(
@@ -143,21 +125,20 @@ fun AudioEffectsSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Lewati Bagian Hening (Skip Silence)", style = MaterialTheme.typography.bodyMedium)
+                    Text(strings.skipSilenceLabel, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = state.skipSilence, onCheckedChange = onSkipSilenceChange)
                 }
             }
 
             HorizontalDivider()
 
-            // 3. Equalizer 5-Band
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Equalizer 5-Band", fontWeight = FontWeight.SemiBold)
+                    Text(strings.eqLabel, fontWeight = FontWeight.SemiBold)
                     Switch(checked = state.eqEnabled, onCheckedChange = onEqEnabledChange)
                 }
 
@@ -176,10 +157,7 @@ fun AudioEffectsSheet(
 
                 if (state.eqEnabled) {
                     state.eqBandLevelsDb.forEachIndexed { idx, db ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = eqLabels.getOrElse(idx) { "B$idx" },
                                 style = MaterialTheme.typography.bodySmall,
@@ -203,13 +181,9 @@ fun AudioEffectsSheet(
 
             HorizontalDivider()
 
-            // 4. Bass Boost & Reverb
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Bass Boost", fontWeight = FontWeight.SemiBold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(strings.bassBoostLabel, fontWeight = FontWeight.SemiBold)
                     Text("${state.bassBoostStrength / 10}%")
                 }
                 Slider(
@@ -218,7 +192,7 @@ fun AudioEffectsSheet(
                     valueRange = 0f..1000f
                 )
 
-                Text("Efek Ruang (Reverb)", fontWeight = FontWeight.SemiBold)
+                Text(strings.reverbLabel, fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

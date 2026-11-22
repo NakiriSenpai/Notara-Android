@@ -30,7 +30,10 @@ class NotaraPlaybackService : MediaSessionService() {
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
-            .build()
+            .build().apply {
+                // Aktifkan loop antrean agar Next di lagu terakhir otomatis kembali ke lagu pertama
+                repeatMode = Player.REPEAT_MODE_ALL
+            }
 
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {

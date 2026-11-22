@@ -21,8 +21,11 @@ import com.notara.player.data.model.EqPreset
 import com.notara.player.data.model.LocalTrack
 import com.notara.player.data.model.ReverbOption
 import com.notara.player.playback.NotaraPlaybackService
+import com.notara.player.ui.i18n.AppLanguage
+import com.notara.player.ui.i18n.LanguagePreferences
 import com.notara.player.ui.theme.AppThemePreset
 import com.notara.player.ui.theme.ThemePreferences
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,10 +35,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
+
+data class DuplicatePlaylistAlert(
+    val trackTitle: String,
+    val playlistName: String
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -46,9 +55,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val coverStorage = app.coverStorage
 
     private var controller: MediaController? = null
+    private var hasInitializedLibrary = false
 
     private val _themePreset = MutableStateFlow(ThemePreferences.loadTheme(application))
     val themePreset: StateFlow<AppThemePreset> = _themePreset.asStateFlow()
+
+    private val _language = MutableStateFlow(LanguagePreferences.load(application))
+    val language: StateFlow<AppLanguage> = _language.asStateFlow()
 
     private val _tracks = MutableStateFlow<List<LocalTrack>>(emptyList())
     val tracks: StateFlow<List<LocalTrack>> = _tracks.asStateFlow()
@@ -56,7 +69,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
-    private val _selectedFolder = MutableStateFlow("Semua")
+    private val _selectedFolder = MutableStateFlow("ALL_FOLDER")
     val selectedFolder: StateFlow<String> = _selectedFolder.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
@@ -74,24 +87,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val folders: StateFlow<List<String>> = _tracks
-        .map { list -> listOf("Semua") + list.map { it.folderName }.distinct().sorted() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("Semua"))
+        .map { list -> listOf("ALL_FOLDER") + list.map { it.folderName }.distinct().sorted() }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("ALL_FOLDER"))
 
     val filteredTracks: StateFlow<List<LocalTrack>> = combine(
         _tracks,
         _selectedFolder,
         _searchQuery
     ) { all, folder, query ->
+        val q = query.trim().lowercase()
         all.filter { track ->
-            val matchFolder = folder == "Semua" || track.folderName == folder
-            val q = query.trim().lowercase()
+            val matchFolder = folder == "ALL_FOLDER" || track.folderName == folder
             val matchQuery = q.isEmpty() ||
                 track.title.lowercase().contains(q) ||
                 track.artist.lowercase().contains(q) ||
                 track.album.lowercase().contains(q)
             matchFolder && matchQuery
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _currentTrack = MutableStateFlow<LocalTrack?>(null)
     val currentTrack: StateFlow<LocalTrack?> = _currentTrack.asStateFlow()
@@ -117,6 +133,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
+    private val _duplicatePlaylistAlert = MutableStateFlow<DuplicatePlaylistAlert?>(null)
+    val duplicatePlaylistAlert: StateFlow<DuplicatePlaylistAlert?> = _duplicatePlaylistAlert.asStateFlow()
+
     val markers: StateFlow<List<TrackMarkerEntity>> = _currentTrack
         .flatMapLatest { track ->
             if (track == null) flowOf(emptyList())
@@ -141,6 +160,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ThemePreferences.saveTheme(app, preset)
     }
 
+    fun selectLanguage(lang: AppLanguage) {
+        _language.value = lang
+        LanguagePreferences.save(app, lang)
+    }
+
     private fun connectMediaController() {
         viewModelScope.launch {
             runCatching {
@@ -149,6 +173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ComponentName(app, NotaraPlaybackService::class.java)
                 )
                 val mc = MediaController.Builder(app, token).buildAsync().await()
+                mc.repeatMode = Player.REPEAT_MODE_ALL
                 controller = mc
                 mc.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -175,22 +200,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             while (true) {
                 val mc = controller
-                if (mc != null && mc.playbackState != Player.STATE_IDLE) {
+                if (mc != null && mc.playbackState != Player.STATE_IDLE && mc.isPlaying) {
                     val pos = mc.currentPosition.coerceAtLeast(0L)
                     _currentPositionMs.value = pos
                     val dur = mc.duration
                     if (dur > 0) _durationMs.value = dur
                 }
-                delay(150L)
+                delay(200L)
             }
         }
     }
 
-    fun scanLibrary() {
-        viewModelScope.launch {
+    /**
+     * Memuat cache Room secara instan (<20ms) saat aplikasi dibuka agar tidak lag.
+     * Pemindaian MediaStore hanya berjalan otomatis jika cache masih kosong,
+     * atau ketika pengguna menekan tombol Rescan secara manual.
+     */
+    fun loadLibraryIfNeeded() {
+        if (hasInitializedLibrary) return
+        hasInitializedLibrary = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val cached = repository.loadCachedTracks()
+            if (cached.isNotEmpty()) {
+                _tracks.value = cached
+            } else {
+                _isScanning.value = true
+                val fresh = repository.scanAndCacheLocalTracks()
+                _tracks.value = fresh
+                _isScanning.value = false
+            }
+        }
+    }
+
+    fun rescanLibrary() {
+        viewModelScope.launch(Dispatchers.IO) {
             _isScanning.value = true
-            val result = repository.loadLocalTracks()
-            _tracks.value = result
+            val fresh = repository.scanAndCacheLocalTracks()
+            _tracks.value = fresh
             _isScanning.value = false
         }
     }
@@ -228,6 +274,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 .build()
         }
+        mc.repeatMode = Player.REPEAT_MODE_ALL
         mc.setMediaItems(mediaItems, startIndex, 0L)
         mc.prepare()
         mc.play()
@@ -240,8 +287,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (cached != null) {
                 _waveformBars.value = cached
             } else {
+                // Tampilkan placeholder sementara lalu decode PCM real RMS di background
+                _waveformBars.value = List(68) { 0.18f }
                 val extracted = waveformExtractor.extractBars(track.contentUri, track.trackHash)
-                _waveformBars.value = extracted
+                if (_currentTrack.value?.trackHash == track.trackHash) {
+                    _waveformBars.value = extracted
+                }
                 repository.saveCachedWaveform(track.trackHash, extracted)
             }
         }
@@ -259,27 +310,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentPositionMs.value = target
     }
 
+    /**
+     * Wrap-around Next: jika sudah di lagu terakhir dalam antrean (Semua Lagu/Folder/Playlist),
+     * otomatis kembali memutar lagu pertama (index 0).
+     */
     fun skipNext() {
-        controller?.seekToNext()
+        val mc = controller ?: return
+        val count = mc.mediaItemCount
+        if (count <= 0) return
+        val nextIndex = (mc.currentMediaItemIndex + 1) % count
+        mc.seekTo(nextIndex, 0L)
+        mc.play()
     }
 
+    /**
+     * Wrap-around Previous: jika posisi > 3 detik kembali ke awal lagu,
+     * jika di lagu pertama mundur ke lagu terakhir.
+     */
     fun skipPrevious() {
         val mc = controller ?: return
+        val count = mc.mediaItemCount
+        if (count <= 0) return
         if (mc.currentPosition > 3000L) {
             mc.seekTo(0L)
         } else {
-            mc.seekToPrevious()
+            val prevIndex = if (mc.currentMediaItemIndex <= 0) count - 1 else mc.currentMediaItemIndex - 1
+            mc.seekTo(prevIndex, 0L)
+            mc.play()
         }
     }
 
-    // --- Markers (Title + Description) ---
+    // --- Markers ---
     fun jumpToMarker(marker: TrackMarkerEntity) {
         _selectedMarker.value = marker
         seekTo(marker.timestampMs)
         val mc = controller
-        if (mc != null && !mc.isPlaying) {
-            mc.play()
-        }
+        if (mc != null && !mc.isPlaying) mc.play()
     }
 
     fun clearSelectedMarker() {
@@ -289,14 +355,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addMarker(timestampMs: Long, title: String, description: String, colorHex: String) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch {
-            repository.addMarker(
-                trackHash = track.trackHash,
-                timestampMs = timestampMs,
-                title = title,
-                description = description,
-                colorHex = colorHex
-            )
-            _statusMessage.value = "Pin disimpan di ${formatTimeMs(timestampMs)}"
+            repository.addMarker(track.trackHash, timestampMs, title, description, colorHex)
+            _statusMessage.value = "Pin @ ${formatTimeMs(timestampMs)}"
         }
     }
 
@@ -309,33 +369,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             val updated = marker.copy(
-                title = newTitle.trim().ifBlank { "Penanda" },
+                title = newTitle.trim().ifBlank { "Pin" },
                 description = newDescription.trim(),
                 timestampMs = newTimestampMs,
                 colorHex = newColorHex
             )
             repository.updateMarker(updated)
-            if (_selectedMarker.value?.id == marker.id) {
-                _selectedMarker.value = updated
-            }
+            if (_selectedMarker.value?.id == marker.id) _selectedMarker.value = updated
         }
     }
 
     fun deleteMarker(marker: TrackMarkerEntity) {
         viewModelScope.launch {
             repository.deleteMarker(marker)
-            if (_selectedMarker.value?.id == marker.id) {
-                _selectedMarker.value = null
-            }
+            if (_selectedMarker.value?.id == marker.id) _selectedMarker.value = null
         }
     }
 
-    // --- Playlists ---
+    // --- Playlists (with strict duplicate guard + popup warning) ---
     fun createPlaylist(name: String, coverUri: Uri?) {
         viewModelScope.launch {
             val savedPath = coverUri?.let { coverStorage.saveCustomCover(it, "pl") }
             repository.createPlaylist(name, savedPath)
-            _statusMessage.value = "Playlist '$name' dibuat"
         }
     }
 
@@ -352,64 +407,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     customCoverPath = savedPath
                 )
             )
-            _statusMessage.value = "Playlist diperbarui"
         }
     }
 
     fun deletePlaylist(playlist: PlaylistEntity) {
-        viewModelScope.launch {
-            repository.deletePlaylist(playlist.id)
-            _statusMessage.value = "Playlist '${playlist.name}' dihapus"
-        }
+        viewModelScope.launch { repository.deletePlaylist(playlist.id) }
     }
 
-    fun addTrackToPlaylist(playlistId: Long, track: LocalTrack) {
+    fun addTrackToPlaylist(playlist: PlaylistEntity, track: LocalTrack) {
         viewModelScope.launch {
-            repository.addTrackToPlaylist(playlistId, track.trackHash)
-            _statusMessage.value = "Ditambahkan ke playlist"
-        }
-    }
-
-    fun removeTrackFromPlaylist(playlistId: Long, trackHash: String) {
-        viewModelScope.launch {
-            repository.removeTrackFromPlaylist(playlistId, trackHash)
-        }
-    }
-
-    // --- Custom Track Cover ---
-    fun updateTrackCustomCover(trackHash: String, sourceUri: Uri) {
-        viewModelScope.launch {
-            val savedPath = coverStorage.saveCustomCover(sourceUri, "trk_$trackHash")
-            if (savedPath != null) {
-                repository.setTrackCustomCover(trackHash, savedPath)
-                _statusMessage.value = "Foto sampul musik diperbarui"
+            val added = repository.addTrackToPlaylistIfAbsent(playlist.id, track.trackHash)
+            if (added) {
+                _statusMessage.value = "+ ${playlist.name}"
             } else {
-                _statusMessage.value = "Gagal memuat gambar"
+                _duplicatePlaylistAlert.value = DuplicatePlaylistAlert(
+                    trackTitle = track.title,
+                    playlistName = playlist.name
+                )
             }
         }
     }
 
-    fun resetTrackCustomCover(trackHash: String) {
+    fun dismissDuplicateAlert() {
+        _duplicatePlaylistAlert.value = null
+    }
+
+    fun removeTrackFromPlaylist(playlistId: Long, trackHash: String) {
+        viewModelScope.launch { repository.removeTrackFromPlaylist(playlistId, trackHash) }
+    }
+
+    // --- Custom Track Covers ---
+    fun updateTrackCustomCover(trackHash: String, sourceUri: Uri) {
         viewModelScope.launch {
-            repository.clearTrackCustomCover(trackHash)
-            _statusMessage.value = "Sampul dikembalikan ke bawaan"
+            val savedPath = coverStorage.saveCustomCover(sourceUri, "trk_$trackHash")
+            if (savedPath != null) repository.setTrackCustomCover(trackHash, savedPath)
         }
     }
 
-    // --- Transcripts & Export ---
+    fun resetTrackCustomCover(trackHash: String) {
+        viewModelScope.launch { repository.clearTrackCustomCover(trackHash) }
+    }
+
+    // --- Transcripts & Backup ---
     fun saveTranscriptText(rawText: String) {
         val track = _currentTrack.value ?: return
-        viewModelScope.launch {
-            repository.saveTranscriptFromRaw(track.trackHash, rawText)
-            _statusMessage.value = "Lirik / transkrip disimpan"
-        }
+        viewModelScope.launch { repository.saveTranscriptFromRaw(track.trackHash, rawText) }
     }
 
     fun syncTranscriptLineToCurrentTime(line: TrackTranscriptEntity) {
         val nowMs = _currentPositionMs.value
-        viewModelScope.launch {
-            repository.syncTranscriptLine(line.id, nowMs)
-        }
+        viewModelScope.launch { repository.syncTranscriptLine(line.id, nowMs) }
     }
 
     suspend fun buildMarkersExportJson(): String? {
@@ -424,9 +471,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 val parsed = BackupExporter.importMarkersFromJson(json, track.trackHash)
                 repository.importMarkers(parsed)
-                _statusMessage.value = "${parsed.size} penanda berhasil diimpor"
-            }.onFailure {
-                _statusMessage.value = "Format JSON penanda tidak valid"
+                _statusMessage.value = "+${parsed.size} pins"
             }
         }
     }
@@ -452,31 +497,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setEqEnabled(enabled: Boolean) = updateEffects { it.copy(eqEnabled = enabled) }
 
     fun selectEqPreset(preset: EqPreset) = updateEffects {
-        it.copy(
-            eqEnabled = true,
-            eqPreset = preset,
-            eqBandLevelsDb = preset.bandsDb
-        )
+        it.copy(eqEnabled = true, eqPreset = preset, eqBandLevelsDb = preset.bandsDb)
     }
 
     fun setEqBand(index: Int, db: Int) = updateEffects { state ->
         val mutable = state.eqBandLevelsDb.toMutableList()
-        if (index in mutable.indices) {
-            mutable[index] = db.coerceIn(-10, 10)
-        }
-        state.copy(
-            eqEnabled = true,
-            eqPreset = EqPreset.CUSTOM,
-            eqBandLevelsDb = mutable
-        )
+        if (index in mutable.indices) mutable[index] = db.coerceIn(-10, 10)
+        state.copy(eqEnabled = true, eqPreset = EqPreset.CUSTOM, eqBandLevelsDb = mutable)
     }
 
-    fun setBassBoost(strength: Int) = updateEffects {
-        it.copy(bassBoostStrength = strength.coerceIn(0, 1000))
-    }
-
+    fun setBassBoost(strength: Int) = updateEffects { it.copy(bassBoostStrength = strength.coerceIn(0, 1000)) }
     fun setReverb(reverb: ReverbOption) = updateEffects { it.copy(reverb = reverb) }
-
     fun resetAudioEffects() = updateEffects { AudioEffectsState() }
 
     fun consumeStatusMessage() {
@@ -495,9 +526,6 @@ fun formatTimeMs(ms: Long): String {
     val hours = totalSec / 3600L
     val minutes = (totalSec % 3600L) / 60L
     val seconds = totalSec % 60L
-    return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%02d:%02d".format(minutes, seconds)
-    }
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%02d:%02d".format(minutes, seconds)
 }

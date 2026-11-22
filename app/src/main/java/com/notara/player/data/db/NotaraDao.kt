@@ -12,6 +12,22 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface NotaraDao {
 
+    // --- Cached Tracks (Instant startup!) ---
+    @Query("SELECT * FROM cached_tracks ORDER BY sortOrder ASC")
+    suspend fun getCachedTracks(): List<CachedTrackEntity>
+
+    @Query("DELETE FROM cached_tracks")
+    suspend fun clearCachedTracks()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCachedTracks(tracks: List<CachedTrackEntity>)
+
+    @Transaction
+    suspend fun replaceCachedTracks(tracks: List<CachedTrackEntity>) {
+        clearCachedTracks()
+        if (tracks.isNotEmpty()) insertCachedTracks(tracks)
+    }
+
     // --- Markers ---
     @Query("SELECT * FROM track_markers WHERE trackHash = :trackHash ORDER BY timestampMs ASC")
     fun observeMarkers(trackHash: String): Flow<List<TrackMarkerEntity>>
@@ -50,9 +66,7 @@ interface NotaraDao {
     @Transaction
     suspend fun replaceTranscript(trackHash: String, lines: List<TrackTranscriptEntity>) {
         clearTranscript(trackHash)
-        if (lines.isNotEmpty()) {
-            insertTranscriptLines(lines)
-        }
+        if (lines.isNotEmpty()) insertTranscriptLines(lines)
     }
 
     // --- Waveforms ---
@@ -78,7 +92,10 @@ interface NotaraDao {
     @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
     suspend fun clearPlaylistTracks(playlistId: Long)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Query("SELECT COUNT(*) FROM playlist_tracks WHERE playlistId = :playlistId AND trackHash = :trackHash")
+    suspend fun countTrackInPlaylist(playlistId: Long, trackHash: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addTrackToPlaylist(ref: PlaylistTrackCrossRef)
 
     @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId AND trackHash = :trackHash")

@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-debug-apk:
-    name: Compile Debug APK
+  build-apk:
+    name: Compile Optimized 60fps APK
     runs-on: ubuntu-latest
 
     steps:
@@ -25,12 +25,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Build Optimized Release APK (60fps)
+        run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Upload Notara Debug APK
+      - name: Upload Notara 60fps APK
         uses: actions/upload-artifact@v4
         with:
-          name: Notara-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Notara-60fps-APK
+          path: app/build/outputs/apk/release/app-release.apk
           retention-days: 30

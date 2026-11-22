@@ -1,5 +1,7 @@
 package com.notara.player.data
 
+import android.net.Uri
+import com.notara.player.data.db.CachedTrackEntity
 import com.notara.player.data.db.NotaraDao
 import com.notara.player.data.db.PlaylistEntity
 import com.notara.player.data.db.PlaylistTrackCrossRef
@@ -14,7 +16,43 @@ class NotaraRepository(
     private val scanner: LocalAudioScanner,
     private val dao: NotaraDao
 ) {
-    suspend fun loadLocalTracks(): List<LocalTrack> = scanner.scanAllAudio()
+    suspend fun loadCachedTracks(): List<LocalTrack> {
+        return dao.getCachedTracks().map { e ->
+            LocalTrack(
+                mediaStoreId = e.mediaStoreId,
+                trackHash = e.trackHash,
+                contentUri = Uri.parse(e.contentUriString),
+                albumArtUri = e.albumArtUriString?.let { Uri.parse(it) },
+                title = e.title,
+                artist = e.artist,
+                album = e.album,
+                durationMs = e.durationMs,
+                folderName = e.folderName,
+                sizeBytes = e.sizeBytes
+            )
+        }
+    }
+
+    suspend fun scanAndCacheLocalTracks(): List<LocalTrack> {
+        val scanned = scanner.scanAllAudio()
+        val entities = scanned.mapIndexed { idx, t ->
+            CachedTrackEntity(
+                mediaStoreId = t.mediaStoreId,
+                trackHash = t.trackHash,
+                contentUriString = t.contentUri.toString(),
+                albumArtUriString = t.albumArtUri?.toString(),
+                title = t.title,
+                artist = t.artist,
+                album = t.album,
+                durationMs = t.durationMs,
+                folderName = t.folderName,
+                sizeBytes = t.sizeBytes,
+                sortOrder = idx
+            )
+        }
+        dao.replaceCachedTracks(entities)
+        return scanned
+    }
 
     // --- Markers ---
     fun observeMarkers(trackHash: String): Flow<List<TrackMarkerEntity>> =
@@ -34,7 +72,7 @@ class NotaraRepository(
             TrackMarkerEntity(
                 trackHash = trackHash,
                 timestampMs = timestampMs,
-                title = title.trim().ifBlank { "Penanda" },
+                title = title.trim().ifBlank { "Pin" },
                 description = description.trim(),
                 colorHex = colorHex
             )
@@ -71,7 +109,7 @@ class NotaraRepository(
         return entity.amplitudesCsv
             .split(",")
             .mapNotNull { it.toFloatOrNull() }
-            .takeIf { it.isNotEmpty() }
+            .takeIf { it.size >= 32 }
     }
 
     suspend fun saveCachedWaveform(trackHash: String, amplitudes: List<Float>) {
@@ -88,7 +126,7 @@ class NotaraRepository(
     suspend fun createPlaylist(name: String, coverPath: String?): Long {
         return dao.insertPlaylist(
             PlaylistEntity(
-                name = name.trim().ifBlank { "Playlist Baru" },
+                name = name.trim().ifBlank { "Playlist" },
                 customCoverPath = coverPath
             )
         )
@@ -101,8 +139,15 @@ class NotaraRepository(
         dao.deletePlaylistById(playlistId)
     }
 
-    suspend fun addTrackToPlaylist(playlistId: Long, trackHash: String) {
+    /**
+     * Mengembalikan false jika lagu sudah ada di playlist (mencegah duplikat!).
+     */
+    suspend fun addTrackToPlaylistIfAbsent(playlistId: Long, trackHash: String): Boolean {
+        if (dao.countTrackInPlaylist(playlistId, trackHash) > 0) {
+            return false
+        }
         dao.addTrackToPlaylist(PlaylistTrackCrossRef(playlistId = playlistId, trackHash = trackHash))
+        return true
     }
 
     suspend fun removeTrackFromPlaylist(playlistId: Long, trackHash: String) {

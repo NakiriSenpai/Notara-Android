@@ -4,6 +4,21 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+@Entity(tableName = "cached_tracks")
+data class CachedTrackEntity(
+    @PrimaryKey val mediaStoreId: Long,
+    val trackHash: String,
+    val contentUriString: String,
+    val albumArtUriString: String?,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val folderName: String,
+    val sizeBytes: Long,
+    val sortOrder: Int
+)
+
 @Entity(
     tableName = "track_markers",
     indices = [Index(value = ["trackHash"])]

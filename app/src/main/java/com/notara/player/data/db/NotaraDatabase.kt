@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [
+        CachedTrackEntity::class,
         TrackMarkerEntity::class,
         TrackTranscriptEntity::class,
         TrackWaveformEntity::class,
@@ -14,7 +15,7 @@ import androidx.room.RoomDatabase
         PlaylistTrackCrossRef::class,
         TrackCustomCoverEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class NotaraDatabase : RoomDatabase() {
