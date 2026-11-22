@@ -6,12 +6,14 @@ import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.notara.player.data.model.AudioEffectsState
+import com.notara.player.widget.NotaraWidgetProvider
 
 class NotaraPlaybackService : MediaSessionService() {
 
@@ -31,7 +33,6 @@ class NotaraPlaybackService : MediaSessionService() {
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .build().apply {
-                // Aktifkan loop antrean agar Next di lagu terakhir otomatis kembali ke lagu pertama
                 repeatMode = Player.REPEAT_MODE_ALL
             }
 
@@ -41,9 +42,12 @@ class NotaraPlaybackService : MediaSessionService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) {
-                    dspController.apply(player, currentEffectsState)
-                }
+                if (isPlaying) dspController.apply(player, currentEffectsState)
+                syncWidget(player)
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                syncWidget(player)
             }
         })
 
@@ -53,9 +57,14 @@ class NotaraPlaybackService : MediaSessionService() {
         dspController.apply(player, currentEffectsState)
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
-        return mediaSession
+    private fun syncWidget(player: ExoPlayer) {
+        val meta = player.currentMediaItem?.mediaMetadata
+        val title = meta?.title?.toString()?.takeIf { it.isNotBlank() } ?: "Notara"
+        val artist = meta?.artist?.toString()?.takeIf { it.isNotBlank() } ?: "Notara Local Audio"
+        NotaraWidgetProvider.updateAllWidgets(this, title, artist, player.isPlaying)
     }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = mediaSession?.player
@@ -82,18 +91,42 @@ class NotaraPlaybackService : MediaSessionService() {
     }
 
     companion object {
-        @Volatile
-        private var activeInstance: NotaraPlaybackService? = null
-
-        @Volatile
-        private var currentEffectsState: AudioEffectsState = AudioEffectsState()
-
+        @Volatile private var activeInstance: NotaraPlaybackService? = null
+        @Volatile private var currentEffectsState: AudioEffectsState = AudioEffectsState()
         private val mainHandler = Handler(Looper.getMainLooper())
 
         fun updateAudioEffects(state: AudioEffectsState) {
             currentEffectsState = state
+            mainHandler.post { activeInstance?.applyEffectsInternal(state) }
+        }
+
+        fun handleWidgetPlayPause() {
             mainHandler.post {
-                activeInstance?.applyEffectsInternal(state)
+                val p = activeInstance?.exoPlayer ?: return@post
+                if (p.isPlaying) p.pause() else p.play()
+            }
+        }
+
+        fun handleWidgetNext() {
+            mainHandler.post {
+                val p = activeInstance?.exoPlayer ?: return@post
+                val c = p.mediaItemCount
+                if (c > 0) {
+                    p.seekTo((p.currentMediaItemIndex + 1) % c, 0L)
+                    p.play()
+                }
+            }
+        }
+
+        fun handleWidgetPrev() {
+            mainHandler.post {
+                val p = activeInstance?.exoPlayer ?: return@post
+                val c = p.mediaItemCount
+                if (c > 0) {
+                    if (p.currentPosition > 3000L) p.seekTo(0L)
+                    else p.seekTo(if (p.currentMediaItemIndex <= 0) c - 1 else p.currentMediaItemIndex - 1, 0L)
+                    p.play()
+                }
             }
         }
     }

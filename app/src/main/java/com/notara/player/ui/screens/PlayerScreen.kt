@@ -32,18 +32,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Loop
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Sync
@@ -56,6 +63,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -87,6 +95,7 @@ import com.notara.player.data.db.TrackMarkerEntity
 import com.notara.player.data.db.TrackTranscriptEntity
 import com.notara.player.data.model.AudioEffectsState
 import com.notara.player.data.model.LocalTrack
+import com.notara.player.ui.AbLoopState
 import com.notara.player.ui.components.CozyArtwork
 import com.notara.player.ui.components.WaveformSeekBar
 import com.notara.player.ui.components.parseHexColor
@@ -101,8 +110,14 @@ private val pinColors = listOf("#E8A864", "#D99AA4", "#6B9E78", "#60A5FA", "#C08
 fun PlayerScreen(
     track: LocalTrack,
     customCoverPath: String?,
+    customCovers: Map<String, String>,
+    isFavorite: Boolean,
+    queue: List<LocalTrack>,
     playlists: List<PlaylistEntity>,
     isPlaying: Boolean,
+    shuffleEnabled: Boolean,
+    repeatOneEnabled: Boolean,
+    abLoop: AbLoopState,
     positionMsFlow: StateFlow<Long>,
     durationMs: Long,
     waveformBars: List<Float>,
@@ -111,7 +126,12 @@ fun PlayerScreen(
     transcriptLines: List<TrackTranscriptEntity>,
     effectsState: AudioEffectsState,
     onBack: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onTogglePlayPause: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onToggleRepeatOne: () -> Unit,
+    onCycleAbLoop: () -> Unit,
+    onJumpQueueIndex: (Int) -> Unit,
     onSeek: (Long) -> Unit,
     onSkipNext: () -> Unit,
     onSkipPrevious: () -> Unit,
@@ -140,6 +160,7 @@ fun PlayerScreen(
     var showEditTranscriptDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showPlaylistPicker by remember { mutableStateOf(false) }
+    var showQueueSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(selectedMarker?.id) {
         if (selectedMarker != null) {
@@ -148,7 +169,6 @@ fun PlayerScreen(
         }
     }
 
-    // Gradien cahaya lampu amber hangat Tokyo Midnight yang persis seperti mockup (GPU-ringan)
     val warmLampGradient = Brush.verticalGradient(
         colorStops = arrayOf(
             0.00f to MaterialTheme.colorScheme.primary.copy(alpha = 0.42f),
@@ -187,46 +207,32 @@ fun PlayerScreen(
                     },
                     title = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = strings.nowPlaying,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = "${track.title} · ${track.artist}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Text(track.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(track.artist, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     },
                     actions = {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            modifier = Modifier.clickable(onClick = onOpenEffects)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(Icons.Rounded.Tune, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-                                val badge = when {
-                                    effectsState.volumePercent > 100 -> "${effectsState.volumePercent}%"
-                                    effectsState.speed != 1.0f -> "%.1fx".format(effectsState.speed)
-                                    else -> strings.effectsBtn
-                                }
-                                Text(badge, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-                            }
+                        IconButton(onClick = onToggleFavorite, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                contentDescription = null,
+                                tint = if (isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = { showQueueSheet = true }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = "Queue", modifier = Modifier.size(21.dp))
                         }
                         Box {
-                            IconButton(onClick = { showMoreMenu = true }) {
+                            IconButton(onClick = { showMoreMenu = true }, modifier = Modifier.size(36.dp)) {
                                 Icon(Icons.Rounded.MoreVert, contentDescription = null)
                             }
                             DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(strings.effectsTitle) },
+                                    leadingIcon = { Icon(Icons.Rounded.Tune, null) },
+                                    onClick = { showMoreMenu = false; onOpenEffects() }
+                                )
                                 DropdownMenuItem(
                                     text = { Text(strings.changeTrackPhoto) },
                                     leadingIcon = { Icon(Icons.Rounded.Image, null) },
@@ -260,17 +266,9 @@ fun PlayerScreen(
                     .padding(horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(Modifier.height(6.dp))
-
-                // =========================================================================
-                // HERO STAGE ATAS (PERSIS MOCKUP TOKYO MIDNIGHT — TANPA KOTAK KOSONG MURAHAN)
-                // - Saat tampil sampul: sampul 216dp berbingkai ganda lembut langsung di atas cahaya amber
-                // - Saat tampil Deskripsi Pin atau Lirik: kartu espresso transparan elegan yang sama tingginya
-                // =========================================================================
+                // Hero Stage (Cover / Pin Description <-> Auto-Scrolling Lyrics)
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(230.dp),
+                    modifier = Modifier.fillMaxWidth().height(216.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     AnimatedContent(
@@ -308,43 +306,98 @@ fun PlayerScreen(
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
-
-                // Pill Switcher [ Catatan | Lirik ] — persis posisi di mockup
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    CozySegmentPill(
-                        label = strings.notesTab,
-                        selected = !isLyricsMode,
-                        onClick = { isLyricsMode = false },
-                        modifier = Modifier.width(102.dp)
-                    )
-                    CozySegmentPill(
-                        label = strings.lyricsTab,
-                        selected = isLyricsMode,
-                        onClick = { isLyricsMode = true },
-                        modifier = Modifier.width(102.dp)
-                    )
-                }
-
                 Spacer(Modifier.height(10.dp))
 
-                // Waveform Real PCM + Pill Komentar + Waktu (Leaf composable: hanya bagian ini yang update tiap 200ms!)
+                // Baris Pill: [ Catatan | Lirik ] + Efek cepat
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Tombol A-B Loop
+                    val abLabel = when {
+                        abLoop.isActive -> "A-B"
+                        abLoop.startMs != null -> "A: ${formatTimeMs(abLoop.startMs)}"
+                        else -> "A-B"
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (abLoop.startMs != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier.clickable(onClick = onCycleAbLoop)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.Loop,
+                                contentDescription = "A-B Loop",
+                                modifier = Modifier.size(14.dp),
+                                tint = if (abLoop.startMs != null) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = abLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (abLoop.startMs != null) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        CozySegmentPill(
+                            label = strings.notesTab,
+                            selected = !isLyricsMode,
+                            onClick = { isLyricsMode = false },
+                            modifier = Modifier.width(86.dp)
+                        )
+                        CozySegmentPill(
+                            label = strings.lyricsTab,
+                            selected = isLyricsMode,
+                            onClick = { isLyricsMode = true },
+                            modifier = Modifier.width(86.dp)
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier.clickable(onClick = onOpenEffects)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Rounded.Tune, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                            val badge = when {
+                                effectsState.volumePercent > 100 -> "${effectsState.volumePercent}%"
+                                effectsState.speed != 1.0f -> "%.1fx".format(effectsState.speed)
+                                else -> strings.effectsBtn
+                            }
+                            Text(badge, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // Waveform Real PCM + A-B Loop Highlight + Pin Comment Pill
                 PlayerWaveformSection(
                     amplitudes = waveformBars,
                     positionMsFlow = positionMsFlow,
                     durationMs = durationMs,
                     markers = markers,
                     selectedMarker = selectedMarker,
-                    onSeek = {
-                        onClearSelectedMarker()
-                        onSeek(it)
-                    },
+                    abLoop = abLoop,
+                    onSeek = { onClearSelectedMarker(); onSeek(it) },
                     onMarkerTap = { marker ->
                         forceShowCover = false
                         isLyricsMode = false
@@ -352,81 +405,80 @@ fun PlayerScreen(
                     }
                 )
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
 
-                // Kontrol Pemutar Utama (Persis Mockup: + Pin | Prev | Squircle Play/Pause | Next | Count)
+                // Kontrol Pemutar Pro: Shuffle | Prev | Play/Pause Squircle | Next | RepeatOne
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(onClick = onToggleShuffle) {
+                        Icon(
+                            imageVector = Icons.Rounded.Shuffle,
+                            contentDescription = "Shuffle",
+                            tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    IconButton(onClick = onSkipPrevious) {
+                        Icon(Icons.Rounded.SkipPrevious, contentDescription = null, modifier = Modifier.size(30.dp))
+                    }
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                        shape = RoundedCornerShape(playButtonRadius),
+                        color = MaterialTheme.colorScheme.primary,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.size(58.dp).clickable(onClick = onTogglePlayPause)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                    IconButton(onClick = onSkipNext) {
+                        Icon(Icons.Rounded.SkipNext, contentDescription = null, modifier = Modifier.size(30.dp))
+                    }
+                    IconButton(onClick = onToggleRepeatOne) {
+                        Icon(
+                            imageVector = if (repeatOneEnabled) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                            contentDescription = "Repeat",
+                            tint = if (repeatOneEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                // Header Daftar Pin + Tombol + Pin
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(strings.pinsCount(markers.size), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
                         modifier = Modifier.clickable { showAddMarkerDialog = true }
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                            Text(strings.pinBtn, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            Icon(Icons.Rounded.Add, null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(strings.pinBtn, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                         }
                     }
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onSkipPrevious) {
-                            Icon(Icons.Rounded.SkipPrevious, contentDescription = null, modifier = Modifier.size(30.dp))
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(playButtonRadius),
-                            color = MaterialTheme.colorScheme.primary,
-                            shadowElevation = 6.dp,
-                            modifier = Modifier
-                                .size(60.dp)
-                                .clickable(onClick = onTogglePlayPause)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                        }
-                        IconButton(onClick = onSkipNext) {
-                            Icon(Icons.Rounded.SkipNext, contentDescription = null, modifier = Modifier.size(30.dp))
-                        }
-                    }
-
-                    Text(
-                        text = strings.pinsCount(markers.size),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.width(56.dp),
-                        textAlign = TextAlign.End
-                    )
                 }
 
-                Spacer(Modifier.height(14.dp))
-
-                // Daftar Judul Pin Minimalis ala Tokyo Midnight Mockup (tanpa kartu abu-abu menumpuk!)
+                // Daftar Judul Pin di Bawah
                 if (markers.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = strings.noPinsHint,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                        Text(strings.noPinsHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     }
                 } else {
                     LazyColumn(
@@ -440,24 +492,16 @@ fun PlayerScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                                        else Color.Transparent
-                                    )
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
                                     .clickable {
                                         forceShowCover = false
                                         isLyricsMode = false
                                         onMarkerTap(marker)
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 7.dp),
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(parseHexColor(marker.colorHex))
-                                )
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(parseHexColor(marker.colorHex)))
                                 Spacer(Modifier.width(10.dp))
                                 Text(
                                     text = formatTimeMs(marker.timestampMs),
@@ -470,18 +514,67 @@ fun PlayerScreen(
                                     text = marker.title,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f)
                                 )
                                 IconButton(onClick = { editingMarker = marker }, modifier = Modifier.size(28.dp)) {
-                                    Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 IconButton(onClick = { onDeleteMarker(marker) }, modifier = Modifier.size(28.dp)) {
-                                    Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Queue (Up Next) Sheet
+    if (showQueueSheet) {
+        ModalBottomSheet(onDismissRequest = { showQueueSheet = false }) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 24.dp)) {
+                Text("Up Next (${queue.size})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().height(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    itemsIndexed(queue, key = { idx, item -> "${idx}_${item.trackHash}" }) { idx, item ->
+                        val isCur = item.trackHash == track.trackHash
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isCur) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f) else Color.Transparent)
+                                .clickable {
+                                    onJumpQueueIndex(idx)
+                                    showQueueSheet = false
+                                }
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CozyArtwork(
+                                customCoverPath = customCovers[item.trackHash],
+                                albumArtUri = item.albumArtUri,
+                                seedKey = item.trackHash,
+                                sizeDp = 42,
+                                cornerDp = 10
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    item.title,
+                                    fontWeight = if (isCur) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isCur) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(item.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                            Text(formatTimeMs(item.durationMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -498,10 +591,7 @@ fun PlayerScreen(
             initialColorHex = pinColors.first(),
             durationMs = durationMs,
             onDismiss = { showAddMarkerDialog = false },
-            onSave = { ts, title, desc, color ->
-                onAddMarker(ts, title, desc, color)
-                showAddMarkerDialog = false
-            }
+            onSave = { ts, title, desc, color -> onAddMarker(ts, title, desc, color); showAddMarkerDialog = false }
         )
     }
 
@@ -515,10 +605,7 @@ fun PlayerScreen(
             initialColorHex = toEdit.colorHex,
             durationMs = durationMs,
             onDismiss = { editingMarker = null },
-            onSave = { ts, title, desc, color ->
-                onUpdateMarker(toEdit, title, desc, ts, color)
-                editingMarker = null
-            }
+            onSave = { ts, title, desc, color -> onUpdateMarker(toEdit, title, desc, ts, color); editingMarker = null }
         )
     }
 
@@ -527,14 +614,8 @@ fun PlayerScreen(
             mutableStateOf(
                 transcriptLines.joinToString("\n") { line ->
                     val ms = line.startMs
-                    if (ms != null) {
-                        val m = ms / 60_000L
-                        val s = (ms % 60_000L) / 1_000L
-                        val c = (ms % 1_000L) / 10L
-                        "[%02d:%02d.%02d]%s".format(m, s, c, line.text)
-                    } else {
-                        line.text
-                    }
+                    if (ms != null) "[%02d:%02d.%02d]%s".format(ms / 60_000L, (ms % 60_000L) / 1_000L, (ms % 1_000L) / 10L, line.text)
+                    else line.text
                 }
             )
         }
@@ -544,21 +625,11 @@ fun PlayerScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(strings.editLyricsHint, style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
-                        value = rawText,
-                        onValueChange = { rawText = it },
-                        minLines = 6,
-                        maxLines = 12,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = rawText, onValueChange = { rawText = it }, minLines = 6, maxLines = 12, modifier = Modifier.fillMaxWidth())
                 }
             },
-            confirmButton = {
-                Button(onClick = { onSaveTranscriptRaw(rawText); showEditTranscriptDialog = false }) { Text(strings.saveBtn) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEditTranscriptDialog = false }) { Text(strings.cancelBtn) }
-            }
+            confirmButton = { Button(onClick = { onSaveTranscriptRaw(rawText); showEditTranscriptDialog = false }) { Text(strings.saveBtn) } },
+            dismissButton = { TextButton(onClick = { showEditTranscriptDialog = false }) { Text(strings.cancelBtn) } }
         )
     }
 
@@ -567,30 +638,18 @@ fun PlayerScreen(
             onDismissRequest = { showPlaylistPicker = false },
             title = { Text(strings.addToPlaylist) },
             text = {
-                if (playlists.isEmpty()) {
-                    Text(strings.noPlaylistYet)
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        playlists.forEach { pl ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onAddTrackToPlaylist(pl)
-                                        showPlaylistPicker = false
-                                    }
-                            ) {
-                                Text(pl.name, modifier = Modifier.padding(12.dp), fontWeight = FontWeight.SemiBold)
-                            }
-                        }
+                if (playlists.isEmpty()) Text(strings.noPlaylistYet)
+                else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    playlists.forEach { pl ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth().clickable { onAddTrackToPlaylist(pl); showPlaylistPicker = false }
+                        ) { Text(pl.name, modifier = Modifier.padding(12.dp), fontWeight = FontWeight.SemiBold) }
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showPlaylistPicker = false }) { Text(strings.closeBtn) }
-            }
+            confirmButton = { TextButton(onClick = { showPlaylistPicker = false }) { Text(strings.closeBtn) } }
         )
     }
 }
@@ -602,6 +661,7 @@ private fun PlayerWaveformSection(
     durationMs: Long,
     markers: List<TrackMarkerEntity>,
     selectedMarker: TrackMarkerEntity?,
+    abLoop: AbLoopState,
     onSeek: (Long) -> Unit,
     onMarkerTap: (TrackMarkerEntity) -> Unit
 ) {
@@ -611,42 +671,29 @@ private fun PlayerWaveformSection(
     }
 
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Gelembung pill judul pin mungil di atas waveform (persis pill 'comment' di mockup Tokyo Midnight)
         if (activePin != null) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f),
-                modifier = Modifier.padding(bottom = 4.dp)
+                modifier = Modifier.padding(bottom = 3.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.ChatBubbleOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(12.dp),
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Text(
-                        text = activePin.title,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Icon(Icons.Rounded.ChatBubbleOutline, null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(activePin.title, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
-
         WaveformSeekBar(
             amplitudes = amplitudes,
             positionMs = positionMs,
             durationMs = durationMs,
             markers = markers,
             selectedMarkerId = activePin?.id,
+            abLoop = abLoop,
             onSeek = onSeek,
             onMarkerTap = onMarkerTap
         )
@@ -680,17 +727,15 @@ private fun PinDescriptionOrCoverStage(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-            modifier = Modifier
-                .fillMaxSize()
-                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), RoundedCornerShape(24.dp))
+            modifier = Modifier.fillMaxSize().border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), RoundedCornerShape(24.dp))
         ) {
-            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     CozyArtwork(
                         customCoverPath = customCoverPath,
                         albumArtUri = track.albumArtUri,
                         seedKey = track.trackHash,
-                        sizeDp = 42,
+                        sizeDp = 40,
                         cornerDp = 10,
                         modifier = Modifier.clickable(onClick = onToggleCover)
                     )
@@ -699,48 +744,35 @@ private fun PinDescriptionOrCoverStage(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(parseHexColor(displayPin.colorHex)))
                             Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = formatTimeMs(displayPin.timestampMs),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Text(formatTimeMs(displayPin.timestampMs), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
-                        Text(
-                            text = displayPin.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Text(displayPin.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     IconButton(onClick = { onEditPin(displayPin) }) {
-                        Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp))
                     }
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
                     val descText = displayPin.description.ifBlank { strings.noPinDescHint }
                     Text(
                         text = descText,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = if (displayPin.description.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface
+                        color = if (displayPin.description.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
         }
     } else {
-        // Persis Mockup Tokyo Midnight: Bingkai sampul ganda hangat langsung di atas cahaya amber!
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(
                 modifier = Modifier
                     .scale(coverScale)
-                    .size(204.dp)
-                    .clip(RoundedCornerShape(30.dp))
+                    .size(194.dp)
+                    .clip(RoundedCornerShape(28.dp))
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f), RoundedCornerShape(30.dp))
-                    .padding(7.dp)
+                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f), RoundedCornerShape(28.dp))
+                    .padding(6.dp)
                     .clickable { if (resolvedPin != null && forceShowCover) onToggleCover() },
                 contentAlignment = Alignment.Center
             ) {
@@ -748,12 +780,12 @@ private fun PinDescriptionOrCoverStage(
                     customCoverPath = customCoverPath,
                     albumArtUri = track.albumArtUri,
                     seedKey = track.trackHash,
-                    sizeDp = 190,
-                    cornerDp = 24
+                    sizeDp = 182,
+                    cornerDp = 22
                 )
             }
             if (resolvedPin != null && forceShowCover) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(strings.tapCoverReturnNotes, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
         }
@@ -775,9 +807,7 @@ private fun InlineLyricsStage(
     val strings = LocalNotaraStrings.current
     val positionMs by positionMsFlow.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val activeIndex = remember(positionMs, lines) {
-        lines.indexOfLast { it.startMs != null && it.startMs <= positionMs }
-    }
+    val activeIndex = remember(positionMs, lines) { lines.indexOfLast { it.startMs != null && it.startMs <= positionMs } }
 
     LaunchedEffect(activeIndex, tapToSyncMode) {
         if (!tapToSyncMode && activeIndex >= 0 && activeIndex < lines.size) {
@@ -788,41 +818,28 @@ private fun InlineLyricsStage(
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-        modifier = Modifier
-            .fillMaxSize()
-            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f), RoundedCornerShape(24.dp))
+        modifier = Modifier.fillMaxSize().border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f), RoundedCornerShape(24.dp))
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    TextButton(onClick = onOpenEdit, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                        Text(strings.editBtn, style = MaterialTheme.typography.labelMedium)
-                    }
-                    TextButton(onClick = onImportFile, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                        Text(strings.importLrcBtn, style = MaterialTheme.typography.labelMedium)
-                    }
+                    TextButton(onClick = onOpenEdit, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text(strings.editBtn, style = MaterialTheme.typography.labelMedium) }
+                    TextButton(onClick = onImportFile, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text(strings.importLrcBtn, style = MaterialTheme.typography.labelMedium) }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (tapToSyncMode && lines.isNotEmpty()) {
                         val nextLine = lines.firstOrNull { it.startMs == null } ?: lines.last()
-                        TextButton(onClick = { onSyncLine(nextLine) }) {
-                            Text(strings.stampTimeBtn, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        }
+                        TextButton(onClick = { onSyncLine(nextLine) }) { Text(strings.stampTimeBtn, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold) }
                     }
                     IconButton(onClick = onToggleTapToSync, modifier = Modifier.size(30.dp)) {
-                        Icon(
-                            imageVector = Icons.Rounded.Sync,
-                            contentDescription = null,
-                            tint = if (tapToSyncMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(Icons.Rounded.Sync, null, tint = if (tapToSyncMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = onExportLrc, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.FileDownload, null, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -844,8 +861,7 @@ private fun InlineLyricsStage(
                             text = line.text,
                             style = if (isActive) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
                             fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Normal,
-                            color = if (isActive) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                            color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
                             textAlign = TextAlign.Center,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -885,35 +901,13 @@ private fun MarkerEditorDialog(
         title = { Text(dialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { timestampMs = (timestampMs - 1000L).coerceAtLeast(0L) }) { Text("-1s") }
                     Text(formatTimeMs(timestampMs), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     OutlinedButton(onClick = { timestampMs = (timestampMs + 1000L).coerceAtMost(durationMs) }) { Text("+1s") }
                 }
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text(strings.pinTitleLabel) },
-                    placeholder = { Text(strings.pinTitleHint) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text(strings.pinDescLabel) },
-                    placeholder = { Text(strings.pinDescHint) },
-                    minLines = 3,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text(strings.pinTitleLabel) }, placeholder = { Text(strings.pinTitleHint) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text(strings.pinDescLabel) }, placeholder = { Text(strings.pinDescHint) }, minLines = 3, maxLines = 5, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     pinColors.forEach { hex ->
                         val selected = hex.equals(colorHex, ignoreCase = true)
@@ -922,21 +916,14 @@ private fun MarkerEditorDialog(
                                 .size(28.dp)
                                 .clip(CircleShape)
                                 .background(parseHexColor(hex))
-                                .then(
-                                    if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                    else Modifier
-                                )
+                                .then(if (selected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier)
                                 .clickable { colorHex = hex }
                         )
                     }
                 }
             }
         },
-        confirmButton = {
-            Button(onClick = { onSave(timestampMs, title, description, colorHex) }) { Text(strings.saveBtn) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(strings.cancelBtn) }
-        }
+        confirmButton = { Button(onClick = { onSave(timestampMs, title, description, colorHex) }) { Text(strings.saveBtn) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancelBtn) } }
     )
 }

@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.notara.player.data.db.TrackMarkerEntity
+import com.notara.player.ui.AbLoopState
 import kotlin.math.abs
 
 @Composable
@@ -24,6 +25,7 @@ fun WaveformSeekBar(
     durationMs: Long,
     markers: List<TrackMarkerEntity>,
     selectedMarkerId: Long?,
+    abLoop: AbLoopState = AbLoopState(),
     onSeek: (Long) -> Unit,
     onMarkerTap: (TrackMarkerEntity) -> Unit,
     modifier: Modifier = Modifier
@@ -72,6 +74,27 @@ fun WaveformSeekBar(
         val waveHeight = h - topPadding - 6f
         val centerY = topPadding + waveHeight / 2f
 
+        // Sorotan area A-B Loop jika aktif
+        if (abLoop.startMs != null) {
+            val sx = ((abLoop.startMs.toFloat() / safeDuration).coerceIn(0f, 1f)) * w
+            if (abLoop.endMs != null && abLoop.endMs > abLoop.startMs) {
+                val ex = ((abLoop.endMs.toFloat() / safeDuration).coerceIn(0f, 1f)) * w
+                drawRoundRect(
+                    color = playedColor.copy(alpha = 0.16f),
+                    topLeft = Offset(sx, topPadding - 4f),
+                    size = Size((ex - sx).coerceAtLeast(4f), waveHeight + 6f),
+                    cornerRadius = CornerRadius(8f, 8f)
+                )
+            } else {
+                drawLine(
+                    color = playedColor,
+                    start = Offset(sx, topPadding - 6f),
+                    end = Offset(sx, h - 2f),
+                    strokeWidth = 3f
+                )
+            }
+        }
+
         val slotWidth = w / bars.size
         val barWidth = (slotWidth * 0.58f).coerceAtLeast(2f)
 
@@ -108,23 +131,11 @@ fun WaveformSeekBar(
                 strokeWidth = if (isSelected) 3f else 2f
             )
             if (isSelected) {
-                drawCircle(
-                    color = pinColor.copy(alpha = 0.28f),
-                    radius = 15f,
-                    center = Offset(mx, 11f)
-                )
+                drawCircle(color = pinColor.copy(alpha = 0.28f), radius = 15f, center = Offset(mx, 11f))
             }
-            drawCircle(
-                color = pinColor,
-                radius = headRadius,
-                center = Offset(mx, 11f)
-            )
+            drawCircle(color = pinColor, radius = headRadius, center = Offset(mx, 11f))
             if (isSelected) {
-                drawCircle(
-                    color = Color.White,
-                    radius = 3f,
-                    center = Offset(mx, 11f)
-                )
+                drawCircle(color = Color.White, radius = 3f, center = Offset(mx, 11f))
             }
         }
     }

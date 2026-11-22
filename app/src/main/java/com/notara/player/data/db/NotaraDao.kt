@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface NotaraDao {
 
-    // --- Cached Tracks (Instant startup!) ---
+    // --- Cached Tracks ---
     @Query("SELECT * FROM cached_tracks ORDER BY sortOrder ASC")
     suspend fun getCachedTracks(): List<CachedTrackEntity>
 
@@ -35,6 +35,9 @@ interface NotaraDao {
     @Query("SELECT * FROM track_markers WHERE trackHash = :trackHash ORDER BY timestampMs ASC")
     suspend fun getMarkersOnce(trackHash: String): List<TrackMarkerEntity>
 
+    @Query("SELECT * FROM track_markers")
+    suspend fun getAllMarkersOnce(): List<TrackMarkerEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMarker(marker: TrackMarkerEntity): Long
 
@@ -53,6 +56,9 @@ interface NotaraDao {
 
     @Query("SELECT * FROM track_transcripts WHERE trackHash = :trackHash ORDER BY lineIndex ASC")
     suspend fun getTranscriptOnce(trackHash: String): List<TrackTranscriptEntity>
+
+    @Query("SELECT * FROM track_transcripts")
+    suspend fun getAllTranscriptsOnce(): List<TrackTranscriptEntity>
 
     @Query("DELETE FROM track_transcripts WHERE trackHash = :trackHash")
     suspend fun clearTranscript(trackHash: String)
@@ -80,6 +86,9 @@ interface NotaraDao {
     @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
     fun observePlaylists(): Flow<List<PlaylistEntity>>
 
+    @Query("SELECT * FROM playlists")
+    suspend fun getAllPlaylistsOnce(): List<PlaylistEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylist(playlist: PlaylistEntity): Long
 
@@ -104,6 +113,9 @@ interface NotaraDao {
     @Query("SELECT * FROM playlist_tracks ORDER BY addedAt ASC")
     fun observeAllPlaylistRefs(): Flow<List<PlaylistTrackCrossRef>>
 
+    @Query("SELECT * FROM playlist_tracks")
+    suspend fun getAllPlaylistRefsOnce(): List<PlaylistTrackCrossRef>
+
     // --- Custom Track Covers ---
     @Query("SELECT * FROM track_custom_covers")
     fun observeAllCustomCovers(): Flow<List<TrackCustomCoverEntity>>
@@ -113,4 +125,27 @@ interface NotaraDao {
 
     @Query("DELETE FROM track_custom_covers WHERE trackHash = :trackHash")
     suspend fun deleteTrackCustomCover(trackHash: String)
+
+    // --- Favorites ---
+    @Query("SELECT trackHash FROM favorite_tracks ORDER BY addedAt DESC")
+    fun observeFavoriteHashes(): Flow<List<String>>
+
+    @Query("SELECT * FROM favorite_tracks")
+    suspend fun getAllFavoritesOnce(): List<FavoriteTrackEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addFavorite(entity: FavoriteTrackEntity)
+
+    @Query("DELETE FROM favorite_tracks WHERE trackHash = :trackHash")
+    suspend fun removeFavorite(trackHash: String)
+
+    // --- Play History (Recently Played) ---
+    @Query("SELECT * FROM play_history ORDER BY lastPlayedAt DESC LIMIT 30")
+    fun observeRecentlyPlayed(): Flow<List<PlayHistoryEntity>>
+
+    @Query("SELECT * FROM play_history WHERE trackHash = :trackHash LIMIT 1")
+    suspend fun getHistoryForTrack(trackHash: String): PlayHistoryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPlayHistory(entity: PlayHistoryEntity)
 }

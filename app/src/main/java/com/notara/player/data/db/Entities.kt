@@ -75,3 +75,16 @@ data class TrackCustomCoverEntity(
     @PrimaryKey val trackHash: String,
     val coverPath: String
 )
+
+@Entity(tableName = "favorite_tracks")
+data class FavoriteTrackEntity(
+    @PrimaryKey val trackHash: String,
+    val addedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "play_history")
+data class PlayHistoryEntity(
+    @PrimaryKey val trackHash: String,
+    val lastPlayedAt: Long = System.currentTimeMillis(),
+    val playCount: Int = 1
+)

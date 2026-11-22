@@ -12,6 +12,9 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.notara.player.NotaraApp
 import com.notara.player.data.BackupExporter
+import com.notara.player.data.LibraryFilterConfig
+import com.notara.player.data.LibraryFilterPreferences
+import com.notara.player.data.TrackSortMode
 import com.notara.player.data.TranscriptParser
 import com.notara.player.data.db.PlaylistEntity
 import com.notara.player.data.db.TrackMarkerEntity
@@ -46,6 +49,13 @@ data class DuplicatePlaylistAlert(
     val playlistName: String
 )
 
+data class AbLoopState(
+    val startMs: Long? = null,
+    val endMs: Long? = null
+) {
+    val isActive: Boolean get() = startMs != null && endMs != null && endMs > startMs
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -63,8 +73,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _language = MutableStateFlow(LanguagePreferences.load(application))
     val language: StateFlow<AppLanguage> = _language.asStateFlow()
 
-    private val _tracks = MutableStateFlow<List<LocalTrack>>(emptyList())
-    val tracks: StateFlow<List<LocalTrack>> = _tracks.asStateFlow()
+    private val _filterConfig = MutableStateFlow(LibraryFilterPreferences.load(application))
+    val filterConfig: StateFlow<LibraryFilterConfig> = _filterConfig.asStateFlow()
+
+    private val _rawTracks = MutableStateFlow<List<LocalTrack>>(emptyList())
+    val rawTracks: StateFlow<List<LocalTrack>> = _rawTracks.asStateFlow()
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
@@ -72,8 +85,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedFolder = MutableStateFlow("ALL_FOLDER")
     val selectedFolder: StateFlow<String> = _selectedFolder.asStateFlow()
 
+    private val _favoritesOnly = MutableStateFlow(false)
+    val favoritesOnly: StateFlow<Boolean> = _favoritesOnly.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    val favoriteHashes: StateFlow<Set<String>> = repository.observeFavoriteHashes()
+        .map { it.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     val customCovers: StateFlow<Map<String, String>> = repository.observeAllCustomCovers()
         .map { list -> list.associate { it.trackHash to it.coverPath } }
@@ -86,34 +106,92 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .map { refs -> refs.groupBy({ it.playlistId }, { it.trackHash }) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
-    val folders: StateFlow<List<String>> = _tracks
-        .map { list -> listOf("ALL_FOLDER") + list.map { it.folderName }.distinct().sorted() }
+    // Semua folder yang terdeteksi (untuk layar Hide Folder di Settings)
+    val allAvailableFolders: StateFlow<List<String>> = _rawTracks
+        .map { list -> list.map { it.folderName }.distinct().sorted() }
         .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("ALL_FOLDER"))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val filteredTracks: StateFlow<List<LocalTrack>> = combine(
-        _tracks,
-        _selectedFolder,
-        _searchQuery
-    ) { all, folder, query ->
-        val q = query.trim().lowercase()
-        all.filter { track ->
-            val matchFolder = folder == "ALL_FOLDER" || track.folderName == folder
-            val matchQuery = q.isEmpty() ||
-                track.title.lowercase().contains(q) ||
-                track.artist.lowercase().contains(q) ||
-                track.album.lowercase().contains(q)
-            matchFolder && matchQuery
+    // Lagu yang terlihat setelah menerapkan Hide Folders & Min Duration
+    val visibleTracks: StateFlow<List<LocalTrack>> = combine(_rawTracks, _filterConfig) { raw, cfg ->
+        val minMs = cfg.minDurationSec * 1000L
+        raw.filter { t ->
+            t.durationMs >= minMs && t.folderName !in cfg.hiddenFolders
         }
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val visibleFolders: StateFlow<List<String>> = visibleTracks
+        .map { list -> listOf("ALL_FOLDER") + list.map { it.folderName }.distinct().sorted() }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("ALL_FOLDER"))
+
+    // Recently Played tracks untuk Home screen
+    val recentlyPlayedTracks: StateFlow<List<LocalTrack>> = combine(
+        repository.observeRecentlyPlayed(),
+        _rawTracks
+    ) { history, all ->
+        val byHash = all.associateBy { it.trackHash }
+        history.mapNotNull { byHash[it.trackHash] }.distinctBy { it.trackHash }
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val filteredTracks: StateFlow<List<LocalTrack>> = combine(
+        visibleTracks,
+        _selectedFolder,
+        _searchQuery,
+        _favoritesOnly,
+        favoriteHashes,
+        _filterConfig
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        val all = values[0] as List<LocalTrack>
+        val folder = values[1] as String
+        val query = (values[2] as String).trim().lowercase()
+        val favOnly = values[3] as Boolean
+        @Suppress("UNCHECKED_CAST")
+        val favs = values[4] as Set<String>
+        val cfg = values[5] as LibraryFilterConfig
+
+        val filtered = all.filter { track ->
+            val matchFolder = folder == "ALL_FOLDER" || track.folderName == folder
+            val matchFav = !favOnly || track.trackHash in favs
+            val matchQuery = query.isEmpty() ||
+                track.title.lowercase().contains(query) ||
+                track.artist.lowercase().contains(query) ||
+                track.album.lowercase().contains(query)
+            matchFolder && matchFav && matchQuery
+        }
+
+        when (cfg.sortMode) {
+            TrackSortMode.DATE_ADDED -> filtered
+            TrackSortMode.TITLE_AZ -> filtered.sortedBy { it.title.lowercase() }
+            TrackSortMode.DURATION_DESC -> filtered.sortedByDescending { it.durationMs }
+            TrackSortMode.FAVORITES_FIRST -> filtered.sortedByDescending { it.trackHash in favs }
+        }
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _currentQueue = MutableStateFlow<List<LocalTrack>>(emptyList())
+    val currentQueue: StateFlow<List<LocalTrack>> = _currentQueue.asStateFlow()
 
     private val _currentTrack = MutableStateFlow<LocalTrack?>(null)
     val currentTrack: StateFlow<LocalTrack?> = _currentTrack.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    private val _shuffleEnabled = MutableStateFlow(false)
+    val shuffleEnabled: StateFlow<Boolean> = _shuffleEnabled.asStateFlow()
+
+    private val _repeatOneEnabled = MutableStateFlow(false)
+    val repeatOneEnabled: StateFlow<Boolean> = _repeatOneEnabled.asStateFlow()
+
+    private val _abLoop = MutableStateFlow(AbLoopState())
+    val abLoop: StateFlow<AbLoopState> = _abLoop.asStateFlow()
 
     private val _currentPositionMs = MutableStateFlow(0L)
     val currentPositionMs: StateFlow<Long> = _currentPositionMs.asStateFlow()
@@ -138,15 +216,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val markers: StateFlow<List<TrackMarkerEntity>> = _currentTrack
         .flatMapLatest { track ->
-            if (track == null) flowOf(emptyList())
-            else repository.observeMarkers(track.trackHash)
+            if (track == null) flowOf(emptyList()) else repository.observeMarkers(track.trackHash)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val transcriptLines: StateFlow<List<TrackTranscriptEntity>> = _currentTrack
         .flatMapLatest { track ->
-            if (track == null) flowOf(emptyList())
-            else repository.observeTranscript(track.trackHash)
+            if (track == null) flowOf(emptyList()) else repository.observeTranscript(track.trackHash)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -165,15 +241,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         LanguagePreferences.save(app, lang)
     }
 
+    private fun updateFilterConfig(transform: (LibraryFilterConfig) -> LibraryFilterConfig) {
+        val updated = transform(_filterConfig.value)
+        _filterConfig.value = updated
+        LibraryFilterPreferences.save(app, updated)
+    }
+
+    fun toggleHiddenFolder(folderName: String) = updateFilterConfig { cfg ->
+        val next = cfg.hiddenFolders.toMutableSet()
+        if (!next.add(folderName)) next.remove(folderName)
+        cfg.copy(hiddenFolders = next)
+    }
+
+    fun setMinDurationSec(sec: Int) = updateFilterConfig { it.copy(minDurationSec = sec.coerceIn(0, 120)) }
+
+    fun setSortMode(mode: TrackSortMode) = updateFilterConfig { it.copy(sortMode = mode) }
+
+    fun toggleFavoritesOnly() {
+        _favoritesOnly.value = !_favoritesOnly.value
+    }
+
+    fun toggleFavoriteTrack(trackHash: String) {
+        val isFav = trackHash in favoriteHashes.value
+        viewModelScope.launch { repository.toggleFavorite(trackHash, isFav) }
+    }
+
     private fun connectMediaController() {
         viewModelScope.launch {
             runCatching {
-                val token = SessionToken(
-                    app,
-                    ComponentName(app, NotaraPlaybackService::class.java)
-                )
+                val token = SessionToken(app, ComponentName(app, NotaraPlaybackService::class.java))
                 val mc = MediaController.Builder(app, token).buildAsync().await()
-                mc.repeatMode = Player.REPEAT_MODE_ALL
+                mc.repeatMode = if (_repeatOneEnabled.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
+                mc.shuffleModeEnabled = _shuffleEnabled.value
                 controller = mc
                 mc.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -182,12 +281,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         val mediaId = mediaItem?.mediaId ?: return
-                        val matched = _tracks.value.firstOrNull { it.trackHash == mediaId }
+                        val matched = _rawTracks.value.firstOrNull { it.trackHash == mediaId }
                         if (matched != null && matched.trackHash != _currentTrack.value?.trackHash) {
                             _currentTrack.value = matched
                             _durationMs.value = matched.durationMs
                             _selectedMarker.value = null
+                            _abLoop.value = AbLoopState()
                             loadWaveformForTrack(matched)
+                            viewModelScope.launch { repository.recordPlay(matched.trackHash) }
                         }
                     }
                 })
@@ -205,28 +306,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _currentPositionMs.value = pos
                     val dur = mc.duration
                     if (dur > 0) _durationMs.value = dur
+
+                    // A-B Loop enforcement
+                    val loop = _abLoop.value
+                    if (loop.isActive && pos >= loop.endMs!!) {
+                        mc.seekTo(loop.startMs!!)
+                        _currentPositionMs.value = loop.startMs
+                    }
                 }
-                delay(200L)
+                delay(180L)
             }
         }
     }
 
-    /**
-     * Memuat cache Room secara instan (<20ms) saat aplikasi dibuka agar tidak lag.
-     * Pemindaian MediaStore hanya berjalan otomatis jika cache masih kosong,
-     * atau ketika pengguna menekan tombol Rescan secara manual.
-     */
     fun loadLibraryIfNeeded() {
         if (hasInitializedLibrary) return
         hasInitializedLibrary = true
         viewModelScope.launch(Dispatchers.IO) {
             val cached = repository.loadCachedTracks()
             if (cached.isNotEmpty()) {
-                _tracks.value = cached
+                _rawTracks.value = cached
             } else {
                 _isScanning.value = true
-                val fresh = repository.scanAndCacheLocalTracks()
-                _tracks.value = fresh
+                _rawTracks.value = repository.scanAndCacheLocalTracks()
                 _isScanning.value = false
             }
         }
@@ -235,8 +337,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun rescanLibrary() {
         viewModelScope.launch(Dispatchers.IO) {
             _isScanning.value = true
-            val fresh = repository.scanAndCacheLocalTracks()
-            _tracks.value = fresh
+            _rawTracks.value = repository.scanAndCacheLocalTracks()
             _isScanning.value = false
         }
     }
@@ -250,14 +351,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playTrack(track: LocalTrack, queue: List<LocalTrack> = filteredTracks.value) {
-        val activeQueue = if (queue.contains(track)) queue else listOf(track)
-        val startIndex = activeQueue.indexOf(track).coerceAtLeast(0)
+        val activeQueue = if (queue.any { it.trackHash == track.trackHash }) queue else listOf(track)
+        val startIndex = activeQueue.indexOfFirst { it.trackHash == track.trackHash }.coerceAtLeast(0)
 
+        _currentQueue.value = activeQueue
         _currentTrack.value = track
         _durationMs.value = track.durationMs
         _currentPositionMs.value = 0L
         _selectedMarker.value = null
+        _abLoop.value = AbLoopState()
         loadWaveformForTrack(track)
+        viewModelScope.launch { repository.recordPlay(track.trackHash) }
 
         val mc = controller ?: return
         val mediaItems = activeQueue.map { item ->
@@ -274,11 +378,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 .build()
         }
-        mc.repeatMode = Player.REPEAT_MODE_ALL
+        mc.repeatMode = if (_repeatOneEnabled.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
+        mc.shuffleModeEnabled = _shuffleEnabled.value
         mc.setMediaItems(mediaItems, startIndex, 0L)
         mc.prepare()
         mc.play()
         NotaraPlaybackService.updateAudioEffects(_effectsState.value)
+    }
+
+    fun jumpToQueueIndex(index: Int) {
+        val mc = controller ?: return
+        val q = _currentQueue.value
+        if (index !in q.indices) return
+        mc.seekTo(index, 0L)
+        mc.play()
+    }
+
+    fun toggleShuffle() {
+        val next = !_shuffleEnabled.value
+        _shuffleEnabled.value = next
+        controller?.shuffleModeEnabled = next
+    }
+
+    fun toggleRepeatOne() {
+        val next = !_repeatOneEnabled.value
+        _repeatOneEnabled.value = next
+        controller?.repeatMode = if (next) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
+    }
+
+    /**
+     * A-B Loop 3-tahap: (1) Set A -> (2) Set B & Aktifkan Loop -> (3) Matikan Loop.
+     */
+    fun cycleAbLoop() {
+        val now = _currentPositionMs.value
+        val cur = _abLoop.value
+        _abLoop.value = when {
+            cur.startMs == null -> AbLoopState(startMs = now, endMs = null)
+            cur.endMs == null -> {
+                if (now > cur.startMs + 500L) {
+                    AbLoopState(startMs = cur.startMs, endMs = now)
+                } else {
+                    AbLoopState(startMs = now, endMs = null)
+                }
+            }
+            else -> AbLoopState()
+        }
+    }
+
+    fun clearAbLoop() {
+        _abLoop.value = AbLoopState()
     }
 
     private fun loadWaveformForTrack(track: LocalTrack) {
@@ -287,7 +435,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (cached != null) {
                 _waveformBars.value = cached
             } else {
-                // Tampilkan placeholder sementara lalu decode PCM real RMS di background
                 _waveformBars.value = List(68) { 0.18f }
                 val extracted = waveformExtractor.extractBars(track.contentUri, track.trackHash)
                 if (_currentTrack.value?.trackHash == track.trackHash) {
@@ -310,23 +457,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentPositionMs.value = target
     }
 
-    /**
-     * Wrap-around Next: jika sudah di lagu terakhir dalam antrean (Semua Lagu/Folder/Playlist),
-     * otomatis kembali memutar lagu pertama (index 0).
-     */
     fun skipNext() {
         val mc = controller ?: return
         val count = mc.mediaItemCount
         if (count <= 0) return
-        val nextIndex = (mc.currentMediaItemIndex + 1) % count
-        mc.seekTo(nextIndex, 0L)
+        if (mc.shuffleModeEnabled) {
+            mc.seekToNextMediaItem()
+        } else {
+            val nextIndex = (mc.currentMediaItemIndex + 1) % count
+            mc.seekTo(nextIndex, 0L)
+        }
         mc.play()
     }
 
-    /**
-     * Wrap-around Previous: jika posisi > 3 detik kembali ke awal lagu,
-     * jika di lagu pertama mundur ke lagu terakhir.
-     */
     fun skipPrevious() {
         val mc = controller ?: return
         val count = mc.mediaItemCount
@@ -360,13 +503,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateMarker(
-        marker: TrackMarkerEntity,
-        newTitle: String,
-        newDescription: String,
-        newTimestampMs: Long,
-        newColorHex: String
-    ) {
+    fun updateMarker(marker: TrackMarkerEntity, newTitle: String, newDescription: String, newTimestampMs: Long, newColorHex: String) {
         viewModelScope.launch {
             val updated = marker.copy(
                 title = newTitle.trim().ifBlank { "Pin" },
@@ -386,7 +523,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- Playlists (with strict duplicate guard + popup warning) ---
+    // --- Playlists ---
     fun createPlaylist(name: String, coverUri: Uri?) {
         viewModelScope.launch {
             val savedPath = coverUri?.let { coverStorage.saveCustomCover(it, "pl") }
@@ -396,17 +533,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updatePlaylist(playlist: PlaylistEntity, newName: String, newCoverUri: Uri?) {
         viewModelScope.launch {
-            val savedPath = if (newCoverUri != null) {
-                coverStorage.saveCustomCover(newCoverUri, "pl_${playlist.id}")
-            } else {
-                playlist.customCoverPath
-            }
-            repository.updatePlaylist(
-                playlist.copy(
-                    name = newName.trim().ifBlank { playlist.name },
-                    customCoverPath = savedPath
-                )
-            )
+            val savedPath = if (newCoverUri != null) coverStorage.saveCustomCover(newCoverUri, "pl_${playlist.id}")
+            else playlist.customCoverPath
+            repository.updatePlaylist(playlist.copy(name = newName.trim().ifBlank { playlist.name }, customCoverPath = savedPath))
         }
     }
 
@@ -420,10 +549,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (added) {
                 _statusMessage.value = "+ ${playlist.name}"
             } else {
-                _duplicatePlaylistAlert.value = DuplicatePlaylistAlert(
-                    trackTitle = track.title,
-                    playlistName = playlist.name
-                )
+                _duplicatePlaylistAlert.value = DuplicatePlaylistAlert(track.title, playlist.name)
             }
         }
     }
@@ -436,7 +562,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.removeTrackFromPlaylist(playlistId, trackHash) }
     }
 
-    // --- Custom Track Covers ---
+    // --- Custom Covers ---
     fun updateTrackCustomCover(trackHash: String, sourceUri: Uri) {
         viewModelScope.launch {
             val savedPath = coverStorage.saveCustomCover(sourceUri, "trk_$trackHash")
@@ -448,7 +574,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.clearTrackCustomCover(trackHash) }
     }
 
-    // --- Transcripts & Backup ---
+    // --- Transcripts & Full Backup ---
     fun saveTranscriptText(rawText: String) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch { repository.saveTranscriptFromRaw(track.trackHash, rawText) }
@@ -461,8 +587,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun buildMarkersExportJson(): String? {
         val track = _currentTrack.value ?: return null
-        val list = repository.getMarkersOnce(track.trackHash)
-        return BackupExporter.exportMarkersToJson(track.title, track.trackHash, list)
+        return BackupExporter.exportMarkersToJson(track.title, track.trackHash, repository.getMarkersOnce(track.trackHash))
     }
 
     fun importMarkersJson(json: String) {
@@ -478,8 +603,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun buildTranscriptExportLrc(): String? {
         val track = _currentTrack.value ?: return null
-        val lines = repository.getTranscriptOnce(track.trackHash)
-        return TranscriptParser.exportToLrc(lines)
+        return TranscriptParser.exportToLrc(repository.getTranscriptOnce(track.trackHash))
+    }
+
+    suspend fun buildFullBackupJson(): String {
+        return repository.buildFullBackupJson(_filterConfig.value)
+    }
+
+    fun restoreFullBackupJson(json: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val parsed = BackupExporter.parseFullBackup(json)
+            if (parsed != null) {
+                repository.restoreFullBackup(parsed)
+                updateFilterConfig {
+                    it.copy(
+                        hiddenFolders = parsed.hiddenFolders.toSet(),
+                        minDurationSec = parsed.minDurationSec
+                    )
+                }
+                _statusMessage.value = "Backup restored!"
+            } else {
+                _statusMessage.value = "Invalid backup file"
+            }
+        }
     }
 
     // --- Audio Effects ---
@@ -495,10 +641,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setPitch(pitch: Float) = updateEffects { it.copy(pitch = pitch.coerceIn(0.5f, 2.0f)) }
     fun setSkipSilence(enabled: Boolean) = updateEffects { it.copy(skipSilence = enabled) }
     fun setEqEnabled(enabled: Boolean) = updateEffects { it.copy(eqEnabled = enabled) }
-
-    fun selectEqPreset(preset: EqPreset) = updateEffects {
-        it.copy(eqEnabled = true, eqPreset = preset, eqBandLevelsDb = preset.bandsDb)
-    }
+    fun selectEqPreset(preset: EqPreset) = updateEffects { it.copy(eqEnabled = true, eqPreset = preset, eqBandLevelsDb = preset.bandsDb) }
 
     fun setEqBand(index: Int, db: Int) = updateEffects { state ->
         val mutable = state.eqBandLevelsDb.toMutableList()

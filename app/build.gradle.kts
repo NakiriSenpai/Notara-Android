@@ -13,8 +13,8 @@ android {
         applicationId = "com.notara.player"
         minSdk = 28
         targetSdk = 35
-        versionCode = 3
-        versionName = "3.0.0"
+        versionCode = 4
+        versionName = "4.0.0"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -23,8 +23,6 @@ android {
 
     buildTypes {
         release {
-            // Dioptimalkan penuh (isDebuggable=false) untuk performa Compose 60fps mulus di HP low-high,
-            // ditandatangani debug key agar langsung bisa dipasang tanpa setup keystore manual.
             isDebuggable = false
             isMinifyEnabled = false
             isShrinkResources = false
