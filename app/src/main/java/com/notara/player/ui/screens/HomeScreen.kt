@@ -41,14 +41,15 @@ import androidx.compose.ui.unit.dp
 import com.notara.player.data.db.PlaylistEntity
 import com.notara.player.data.model.LocalTrack
 import com.notara.player.ui.components.CozyArtwork
+import com.notara.player.ui.components.MiniWaveformProgressBar
 import com.notara.player.ui.components.NotaraBrandIcon
-import com.notara.player.ui.components.WavyLiveProgressBar
 import com.notara.player.ui.i18n.LocalNotaraStrings
 import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun HomeScreen(
     heroTrack: LocalTrack?,
+    waveformBars: List<Float>,
     isPlaying: Boolean,
     isHeroCurrentlyPlaying: Boolean,
     positionMsFlow: StateFlow<Long>,
@@ -61,6 +62,7 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onHeroCardClick: (LocalTrack) -> Unit,
     onHeroPlayPause: (LocalTrack) -> Unit,
+    onHeroSeek: (Long) -> Unit,
     onTrackClick: (LocalTrack, List<LocalTrack>) -> Unit,
     onPlaylistClick: (PlaylistEntity) -> Unit,
     onCreatePlaylistClick: () -> Unit
@@ -109,96 +111,93 @@ fun HomeScreen(
             }
         }
 
-        // 2. Cozy Animated Now / Last Played Hero Card (dengan WavyLiveProgressBar!)
+        // 2. Hero Card Desain 17 + Tombol Play di Kanan Atas + Real Mini Waveform + Durasi
         if (heroTrack != null) {
             item {
-                val cardGradient = Brush.horizontalGradient(
+                val cardGradient = Brush.verticalGradient(
                     colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
-                        MaterialTheme.colorScheme.surfaceVariant,
-                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f)
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                        MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 18.dp)
-                        .clip(RoundedCornerShape(26.dp))
+                        .clip(RoundedCornerShape(24.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .background(cardGradient)
                         .border(
                             1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
-                            RoundedCornerShape(26.dp)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                            RoundedCornerShape(24.dp)
                         )
                         .clickable { onHeroCardClick(heroTrack) }
                         .padding(16.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(82.dp)
-                                .clip(CircleShape)
-                                .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f), CircleShape)
-                                .padding(3.dp)
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Baris Atas: Foto Cover Kiri | Judul & Artis Tengah | Tombol Play Kanan Atas
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             CozyArtwork(
                                 customCoverPath = customCovers[heroTrack.trackHash],
                                 albumArtUri = heroTrack.albumArtUri,
                                 seedKey = heroTrack.trackHash,
-                                sizeDp = 76,
-                                cornerDp = 38
+                                sizeDp = 58,
+                                cornerDp = 15
                             )
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = heroTrack.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = heroTrack.artist,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                WavyLiveProgressBar(
-                                    positionMsFlow = positionMsFlow,
-                                    durationMs = if (isHeroCurrentlyPlaying) durationMs else heroTrack.durationMs,
-                                    isPlaying = isHeroCurrentlyPlaying && isPlaying,
-                                    modifier = Modifier.weight(1f)
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = heroTrack.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clickable { onHeroPlayPause(heroTrack) }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = if (isHeroCurrentlyPlaying && isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = heroTrack.artist,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                shadowElevation = 4.dp,
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clickable { onHeroPlayPause(heroTrack) }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (isHeroCurrentlyPlaying && isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(26.dp)
+                                    )
                                 }
                             }
                         }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // Baris Bawah: Desain 17 — 36-Bar Real Mini Audio Waveform + Durasi (01:24 / 04:12)
+                        MiniWaveformProgressBar(
+                            amplitudes = waveformBars,
+                            positionMsFlow = positionMsFlow,
+                            durationMs = if (isHeroCurrentlyPlaying) durationMs else heroTrack.durationMs,
+                            isActiveTrack = isHeroCurrentlyPlaying,
+                            isPlaying = isPlaying,
+                            onSeek = if (isHeroCurrentlyPlaying) onHeroSeek else null
+                        )
                     }
                 }
             }

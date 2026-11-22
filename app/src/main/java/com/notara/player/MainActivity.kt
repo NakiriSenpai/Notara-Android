@@ -379,6 +379,7 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                                 val heroTrack = currentTrack ?: recentlyPlayed.firstOrNull() ?: allVisibleTracks.firstOrNull()
                                                 HomeScreen(
                                                     heroTrack = heroTrack,
+                                                    waveformBars = waveformBars,
                                                     isPlaying = isPlaying,
                                                     isHeroCurrentlyPlaying = heroTrack != null && heroTrack.trackHash == currentTrack?.trackHash,
                                                     positionMsFlow = viewModel.currentPositionMs,
@@ -397,6 +398,7 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                                         if (currentTrack?.trackHash == t.trackHash) viewModel.togglePlayPause()
                                                         else viewModel.playTrack(t, allVisibleTracks)
                                                     },
+                                                    onHeroSeek = viewModel::seekTo,
                                                     onTrackClick = { t, q ->
                                                         viewModel.playTrack(t, q)
                                                         showPlayerScreen = true
