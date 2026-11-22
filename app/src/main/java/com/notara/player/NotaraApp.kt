@@ -1,6 +1,7 @@
 package com.notara.player
 
 import android.app.Application
+import com.notara.player.data.CoverImageStorage
 import com.notara.player.data.LocalAudioScanner
 import com.notara.player.data.NotaraRepository
 import com.notara.player.data.db.NotaraDatabase
@@ -15,4 +16,5 @@ class NotaraApp : Application() {
         )
     }
     val waveformExtractor: WaveformExtractor by lazy { WaveformExtractor(this) }
+    val coverStorage: CoverImageStorage by lazy { CoverImageStorage(this) }
 }

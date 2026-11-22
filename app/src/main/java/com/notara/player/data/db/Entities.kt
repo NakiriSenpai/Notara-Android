@@ -12,8 +12,9 @@ data class TrackMarkerEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val trackHash: String,
     val timestampMs: Long,
-    val comment: String,
-    val colorHex: String = "#F59E0B",
+    val title: String,
+    val description: String = "",
+    val colorHex: String = "#E8A864",
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -25,7 +26,7 @@ data class TrackTranscriptEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val trackHash: String,
     val lineIndex: Int,
-    val startMs: Long?, // null jika belum disinkronkan
+    val startMs: Long?,
     val text: String
 )
 
@@ -33,4 +34,29 @@ data class TrackTranscriptEntity(
 data class TrackWaveformEntity(
     @PrimaryKey val trackHash: String,
     val amplitudesCsv: String
+)
+
+@Entity(tableName = "playlists")
+data class PlaylistEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val customCoverPath: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "playlist_tracks",
+    primaryKeys = ["playlistId", "trackHash"],
+    indices = [Index(value = ["playlistId"]), Index(value = ["trackHash"])]
+)
+data class PlaylistTrackCrossRef(
+    val playlistId: Long,
+    val trackHash: String,
+    val addedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "track_custom_covers")
+data class TrackCustomCoverEntity(
+    @PrimaryKey val trackHash: String,
+    val coverPath: String
 )

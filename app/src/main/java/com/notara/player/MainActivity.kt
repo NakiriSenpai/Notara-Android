@@ -12,6 +12,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,14 +43,17 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.palette.graphics.Palette
+import com.notara.player.data.db.PlaylistEntity
 import com.notara.player.ui.MainViewModel
 import com.notara.player.ui.components.AudioEffectsSheet
+import com.notara.player.ui.components.ThemePickerSheet
 import com.notara.player.ui.screens.LibraryScreen
 import com.notara.player.ui.screens.PlayerScreen
 import com.notara.player.ui.theme.NotaraTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -56,6 +66,12 @@ class MainActivity : ComponentActivity() {
             NotaraRoot(viewModel = viewModel)
         }
     }
+}
+
+private sealed interface PhotoPickTarget {
+    data class TrackCover(val trackHash: String) : PhotoPickTarget
+    data class PlaylistCover(val playlist: PlaylistEntity) : PhotoPickTarget
+    data class NewPlaylistWithCover(val name: String) : PhotoPickTarget
 }
 
 @Composable
@@ -96,11 +112,16 @@ private fun NotaraRoot(viewModel: MainViewModel) {
         }
     }
 
-    val tracks by viewModel.filteredTracks.collectAsStateWithLifecycle()
+    val themePreset by viewModel.themePreset.collectAsStateWithLifecycle()
+    val allTracks by viewModel.tracks.collectAsStateWithLifecycle()
+    val filteredTracks by viewModel.filteredTracks.collectAsStateWithLifecycle()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
     val selectedFolder by viewModel.selectedFolder.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+    val customCovers by viewModel.customCovers.collectAsStateWithLifecycle()
+    val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    val playlistTrackMap by viewModel.playlistTrackMap.collectAsStateWithLifecycle()
     val currentTrack by viewModel.currentTrack.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
     val positionMs by viewModel.currentPositionMs.collectAsStateWithLifecycle()
@@ -114,28 +135,31 @@ private fun NotaraRoot(viewModel: MainViewModel) {
 
     var showPlayerScreen by remember { mutableStateOf(false) }
     var showEffectsSheet by remember { mutableStateOf(false) }
-    var seedColor by remember { mutableStateOf(Color(0xFF3B82F6)) }
+    var showThemePicker by remember { mutableStateOf(false) }
+    var pendingPhotoTarget by remember { mutableStateOf<PhotoPickTarget?>(null) }
+    var dynamicSeed by remember { mutableStateOf(Color(0xFFE8A864)) }
 
-    // Ekstraksi warna dinamis dari sampul album lokal (gaya ArchiveTune)
-    LaunchedEffect(currentTrack?.albumArtUri) {
-        val artUri = currentTrack?.albumArtUri
-        if (artUri == null) {
-            seedColor = Color(0xFF3B82F6)
-            return@LaunchedEffect
-        }
+    val currentCustomCoverPath = currentTrack?.let { customCovers[it.trackHash] }
+
+    // Ekstraksi warna dinamis (aktif saat pengguna memilih tema Dinamis Sampul)
+    LaunchedEffect(currentTrack?.albumArtUri, currentCustomCoverPath) {
         val extracted = withContext(Dispatchers.IO) {
             runCatching {
-                context.contentResolver.openInputStream(artUri)?.use { stream ->
-                    val bmp = BitmapFactory.decodeStream(stream) ?: return@use null
-                    val palette = Palette.from(bmp).generate()
-                    val rgb = palette.getVibrantColor(
-                        palette.getMutedColor(0xFF3B82F6.toInt())
-                    )
-                    Color(rgb)
-                }
+                val bmp = when {
+                    !currentCustomCoverPath.isNullOrBlank() && File(currentCustomCoverPath).exists() ->
+                        BitmapFactory.decodeFile(currentCustomCoverPath)
+                    currentTrack?.albumArtUri != null ->
+                        context.contentResolver.openInputStream(currentTrack!!.albumArtUri!!)?.use {
+                            BitmapFactory.decodeStream(it)
+                        }
+                    else -> null
+                } ?: return@runCatching null
+                val palette = Palette.from(bmp).generate()
+                val rgb = palette.getVibrantColor(palette.getMutedColor(0xFFE8A864.toInt()))
+                Color(rgb)
             }.getOrNull()
         }
-        seedColor = extracted ?: Color(0xFF3B82F6)
+        dynamicSeed = extracted ?: Color(0xFFE8A864)
     }
 
     LaunchedEffect(statusMessage) {
@@ -145,7 +169,26 @@ private fun NotaraRoot(viewModel: MainViewModel) {
         }
     }
 
-    // SAF Launchers: Impor & Ekspor Transkrip / Penanda
+    // Pemilih Foto dari Galeri (untuk Icon Musik maupun Icon Playlist)
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        val target = pendingPhotoTarget
+        pendingPhotoTarget = null
+        if (target == null) return@rememberLauncherForActivityResult
+        when (target) {
+            is PhotoPickTarget.TrackCover -> {
+                if (uri != null) viewModel.updateTrackCustomCover(target.trackHash, uri)
+            }
+            is PhotoPickTarget.PlaylistCover -> {
+                if (uri != null) viewModel.updatePlaylist(target.playlist, target.playlist.name, uri)
+            }
+            is PhotoPickTarget.NewPlaylistWithCover -> {
+                viewModel.createPlaylist(target.name, uri)
+            }
+        }
+    }
+
     val importTranscriptLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -154,9 +197,7 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                 val text = runCatching {
                     context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                 }.getOrNull()
-                if (!text.isNullOrBlank()) {
-                    viewModel.saveTranscriptText(text)
-                }
+                if (!text.isNullOrBlank()) viewModel.saveTranscriptText(text)
             }
         }
     }
@@ -195,14 +236,12 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                 val json = runCatching {
                     context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                 }.getOrNull()
-                if (!json.isNullOrBlank()) {
-                    viewModel.importMarkersJson(json)
-                }
+                if (!json.isNullOrBlank()) viewModel.importMarkersJson(json)
             }
         }
     }
 
-    NotaraTheme(seedColor = seedColor) {
+    NotaraTheme(preset = themePreset, dynamicSeed = dynamicSeed) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             if (!hasAudioPermission) {
                 Column(
@@ -221,59 +260,108 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                         Text("Izinkan Akses Audio")
                     }
                 }
-            } else if (showPlayerScreen && currentTrack != null) {
-                PlayerScreen(
-                    track = currentTrack!!,
-                    isPlaying = isPlaying,
-                    positionMs = positionMs,
-                    durationMs = durationMs,
-                    waveformBars = waveformBars,
-                    markers = markers,
-                    selectedMarker = selectedMarker,
-                    transcriptLines = transcriptLines,
-                    effectsState = effectsState,
-                    onBack = { showPlayerScreen = false },
-                    onTogglePlayPause = viewModel::togglePlayPause,
-                    onSeek = viewModel::seekTo,
-                    onSkipNext = viewModel::skipNext,
-                    onSkipPrevious = viewModel::skipPrevious,
-                    onMarkerTap = viewModel::jumpToMarker,
-                    onAddMarker = viewModel::addMarker,
-                    onUpdateMarker = viewModel::updateMarker,
-                    onDeleteMarker = viewModel::deleteMarker,
-                    onOpenEffects = { showEffectsSheet = true },
-                    onSaveTranscriptRaw = viewModel::saveTranscriptText,
-                    onSyncTranscriptLine = viewModel::syncTranscriptLineToCurrentTime,
-                    onImportTranscriptFile = { importTranscriptLauncher.launch(arrayOf("text/*", "application/octet-stream")) },
-                    onExportTranscriptLrc = {
-                        val safeName = (currentTrack?.title ?: "transkrip").replace(Regex("[^a-zA-Z0-9_-]"), "_")
-                        exportTranscriptLauncher.launch("${safeName}.lrc")
-                    },
-                    onExportMarkersJson = {
-                        val safeName = (currentTrack?.title ?: "penanda").replace(Regex("[^a-zA-Z0-9_-]"), "_")
-                        exportMarkersLauncher.launch("${safeName}_markers.json")
-                    },
-                    onImportMarkersJson = { importMarkersLauncher.launch(arrayOf("application/json", "text/*")) }
-                )
             } else {
-                LibraryScreen(
-                    tracks = tracks,
-                    folders = folders,
-                    selectedFolder = selectedFolder,
-                    searchQuery = searchQuery,
-                    isScanning = isScanning,
-                    currentTrack = currentTrack,
-                    isPlaying = isPlaying,
-                    onSearchChange = viewModel::updateSearchQuery,
-                    onFolderSelect = viewModel::selectFolder,
-                    onRescan = viewModel::scanLibrary,
-                    onTrackClick = { track ->
-                        viewModel.playTrack(track)
-                        showPlayerScreen = true
+                AnimatedContent(
+                    targetState = showPlayerScreen && currentTrack != null,
+                    transitionSpec = {
+                        if (targetState) {
+                            (slideInVertically(tween(260)) { it / 6 } + fadeIn(tween(220))) togetherWith fadeOut(tween(160))
+                        } else {
+                            fadeIn(tween(200)) togetherWith (slideOutVertically(tween(220)) { it / 6 } + fadeOut(tween(180)))
+                        }
                     },
-                    onTogglePlayPause = viewModel::togglePlayPause,
-                    onOpenPlayer = { showPlayerScreen = true }
-                )
+                    label = "screen_transition"
+                ) { inPlayer ->
+                    if (inPlayer && currentTrack != null) {
+                        val activeTrack = currentTrack!!
+                        PlayerScreen(
+                            track = activeTrack,
+                            customCoverPath = customCovers[activeTrack.trackHash],
+                            playlists = playlists,
+                            isPlaying = isPlaying,
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            waveformBars = waveformBars,
+                            markers = markers,
+                            selectedMarker = selectedMarker,
+                            transcriptLines = transcriptLines,
+                            effectsState = effectsState,
+                            onBack = { showPlayerScreen = false },
+                            onTogglePlayPause = viewModel::togglePlayPause,
+                            onSeek = viewModel::seekTo,
+                            onSkipNext = viewModel::skipNext,
+                            onSkipPrevious = viewModel::skipPrevious,
+                            onMarkerTap = viewModel::jumpToMarker,
+                            onClearSelectedMarker = viewModel::clearSelectedMarker,
+                            onAddMarker = viewModel::addMarker,
+                            onUpdateMarker = viewModel::updateMarker,
+                            onDeleteMarker = viewModel::deleteMarker,
+                            onOpenEffects = { showEffectsSheet = true },
+                            onPickTrackCover = {
+                                pendingPhotoTarget = PhotoPickTarget.TrackCover(activeTrack.trackHash)
+                                photoPickerLauncher.launch("image/*")
+                            },
+                            onAddTrackToPlaylist = { plId -> viewModel.addTrackToPlaylist(plId, activeTrack) },
+                            onSaveTranscriptRaw = viewModel::saveTranscriptText,
+                            onSyncTranscriptLine = viewModel::syncTranscriptLineToCurrentTime,
+                            onImportTranscriptFile = { importTranscriptLauncher.launch(arrayOf("text/*", "application/octet-stream")) },
+                            onExportTranscriptLrc = {
+                                val safeName = activeTrack.title.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                                exportTranscriptLauncher.launch("${safeName}.lrc")
+                            },
+                            onExportMarkersJson = {
+                                val safeName = activeTrack.title.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                                exportMarkersLauncher.launch("${safeName}_markers.json")
+                            },
+                            onImportMarkersJson = { importMarkersLauncher.launch(arrayOf("application/json", "text/*")) }
+                        )
+                    } else {
+                        LibraryScreen(
+                            allTracks = allTracks,
+                            filteredTracks = filteredTracks,
+                            folders = folders,
+                            selectedFolder = selectedFolder,
+                            searchQuery = searchQuery,
+                            isScanning = isScanning,
+                            customCovers = customCovers,
+                            playlists = playlists,
+                            playlistTrackMap = playlistTrackMap,
+                            currentTrack = currentTrack,
+                            isPlaying = isPlaying,
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            onSearchChange = viewModel::updateSearchQuery,
+                            onFolderSelect = viewModel::selectFolder,
+                            onRescan = viewModel::scanLibrary,
+                            onOpenThemePicker = { showThemePicker = true },
+                            onTrackClick = { track, queue ->
+                                viewModel.playTrack(track, queue)
+                                showPlayerScreen = true
+                            },
+                            onTogglePlayPause = viewModel::togglePlayPause,
+                            onSkipNext = viewModel::skipNext,
+                            onOpenPlayer = { showPlayerScreen = true },
+                            onPickTrackCover = { track ->
+                                pendingPhotoTarget = PhotoPickTarget.TrackCover(track.trackHash)
+                                photoPickerLauncher.launch("image/*")
+                            },
+                            onResetTrackCover = { track -> viewModel.resetTrackCustomCover(track.trackHash) },
+                            onCreatePlaylist = { name -> viewModel.createPlaylist(name, null) },
+                            onCreatePlaylistWithPhoto = { name ->
+                                pendingPhotoTarget = PhotoPickTarget.NewPlaylistWithCover(name)
+                                photoPickerLauncher.launch("image/*")
+                            },
+                            onRenamePlaylist = { pl, newName -> viewModel.updatePlaylist(pl, newName, null) },
+                            onPickPlaylistCover = { pl ->
+                                pendingPhotoTarget = PhotoPickTarget.PlaylistCover(pl)
+                                photoPickerLauncher.launch("image/*")
+                            },
+                            onDeletePlaylist = viewModel::deletePlaylist,
+                            onAddTrackToPlaylist = viewModel::addTrackToPlaylist,
+                            onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist
+                        )
+                    }
+                }
             }
 
             if (showEffectsSheet) {
@@ -291,6 +379,14 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                     onBassBoostChange = viewModel::setBassBoost,
                     onReverbSelect = viewModel::setReverb,
                     onResetAll = viewModel::resetAudioEffects
+                )
+            }
+
+            if (showThemePicker) {
+                ThemePickerSheet(
+                    currentPreset = themePreset,
+                    onSelect = viewModel::selectTheme,
+                    onDismiss = { showThemePicker = false }
                 )
             }
         }

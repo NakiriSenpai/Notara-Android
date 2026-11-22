@@ -9,9 +9,12 @@ import androidx.room.RoomDatabase
     entities = [
         TrackMarkerEntity::class,
         TrackTranscriptEntity::class,
-        TrackWaveformEntity::class
+        TrackWaveformEntity::class,
+        PlaylistEntity::class,
+        PlaylistTrackCrossRef::class,
+        TrackCustomCoverEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class NotaraDatabase : RoomDatabase() {
@@ -27,7 +30,9 @@ abstract class NotaraDatabase : RoomDatabase() {
                     context.applicationContext,
                     NotaraDatabase::class.java,
                     "notara_local.db"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

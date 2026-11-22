@@ -2,6 +2,7 @@ package com.notara.player.ui
 
 import android.app.Application
 import android.content.ComponentName
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -12,6 +13,7 @@ import androidx.media3.session.SessionToken
 import com.notara.player.NotaraApp
 import com.notara.player.data.BackupExporter
 import com.notara.player.data.TranscriptParser
+import com.notara.player.data.db.PlaylistEntity
 import com.notara.player.data.db.TrackMarkerEntity
 import com.notara.player.data.db.TrackTranscriptEntity
 import com.notara.player.data.model.AudioEffectsState
@@ -19,6 +21,8 @@ import com.notara.player.data.model.EqPreset
 import com.notara.player.data.model.LocalTrack
 import com.notara.player.data.model.ReverbOption
 import com.notara.player.playback.NotaraPlaybackService
+import com.notara.player.ui.theme.AppThemePreset
+import com.notara.player.ui.theme.ThemePreferences
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
@@ -38,8 +43,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as NotaraApp
     private val repository = app.repository
     private val waveformExtractor = app.waveformExtractor
+    private val coverStorage = app.coverStorage
 
     private var controller: MediaController? = null
+
+    private val _themePreset = MutableStateFlow(ThemePreferences.loadTheme(application))
+    val themePreset: StateFlow<AppThemePreset> = _themePreset.asStateFlow()
 
     private val _tracks = MutableStateFlow<List<LocalTrack>>(emptyList())
     val tracks: StateFlow<List<LocalTrack>> = _tracks.asStateFlow()
@@ -53,10 +62,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    val customCovers: StateFlow<Map<String, String>> = repository.observeAllCustomCovers()
+        .map { list -> list.associate { it.trackHash to it.coverPath } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val playlists: StateFlow<List<PlaylistEntity>> = repository.observePlaylists()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val playlistTrackMap: StateFlow<Map<Long, List<String>>> = repository.observeAllPlaylistRefs()
+        .map { refs -> refs.groupBy({ it.playlistId }, { it.trackHash }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val folders: StateFlow<List<String>> = _tracks
-        .combine(flowOf(Unit)) { list, _ ->
-            listOf("Semua") + list.map { it.folderName }.distinct().sorted()
-        }
+        .map { list -> listOf("Semua") + list.map { it.folderName }.distinct().sorted() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf("Semua"))
 
     val filteredTracks: StateFlow<List<LocalTrack>> = combine(
@@ -116,6 +134,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         connectMediaController()
         startPositionTicker()
+    }
+
+    fun selectTheme(preset: AppThemePreset) {
+        _themePreset.value = preset
+        ThemePreferences.saveTheme(app, preset)
     }
 
     private fun connectMediaController() {
@@ -249,6 +272,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- Markers (Title + Description) ---
     fun jumpToMarker(marker: TrackMarkerEntity) {
         _selectedMarker.value = marker
         seekTo(marker.timestampMs)
@@ -262,23 +286,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedMarker.value = null
     }
 
-    fun addMarker(timestampMs: Long, comment: String, colorHex: String) {
+    fun addMarker(timestampMs: Long, title: String, description: String, colorHex: String) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch {
             repository.addMarker(
                 trackHash = track.trackHash,
                 timestampMs = timestampMs,
-                comment = comment.ifBlank { "Penanda" },
+                title = title,
+                description = description,
                 colorHex = colorHex
             )
-            _statusMessage.value = "Penanda disimpan pada ${formatTimeMs(timestampMs)}"
+            _statusMessage.value = "Pin disimpan di ${formatTimeMs(timestampMs)}"
         }
     }
 
-    fun updateMarker(marker: TrackMarkerEntity, newComment: String, newTimestampMs: Long, newColorHex: String) {
+    fun updateMarker(
+        marker: TrackMarkerEntity,
+        newTitle: String,
+        newDescription: String,
+        newTimestampMs: Long,
+        newColorHex: String
+    ) {
         viewModelScope.launch {
             val updated = marker.copy(
-                comment = newComment.ifBlank { "Penanda" },
+                title = newTitle.trim().ifBlank { "Penanda" },
+                description = newDescription.trim(),
                 timestampMs = newTimestampMs,
                 colorHex = newColorHex
             )
@@ -298,11 +330,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- Playlists ---
+    fun createPlaylist(name: String, coverUri: Uri?) {
+        viewModelScope.launch {
+            val savedPath = coverUri?.let { coverStorage.saveCustomCover(it, "pl") }
+            repository.createPlaylist(name, savedPath)
+            _statusMessage.value = "Playlist '$name' dibuat"
+        }
+    }
+
+    fun updatePlaylist(playlist: PlaylistEntity, newName: String, newCoverUri: Uri?) {
+        viewModelScope.launch {
+            val savedPath = if (newCoverUri != null) {
+                coverStorage.saveCustomCover(newCoverUri, "pl_${playlist.id}")
+            } else {
+                playlist.customCoverPath
+            }
+            repository.updatePlaylist(
+                playlist.copy(
+                    name = newName.trim().ifBlank { playlist.name },
+                    customCoverPath = savedPath
+                )
+            )
+            _statusMessage.value = "Playlist diperbarui"
+        }
+    }
+
+    fun deletePlaylist(playlist: PlaylistEntity) {
+        viewModelScope.launch {
+            repository.deletePlaylist(playlist.id)
+            _statusMessage.value = "Playlist '${playlist.name}' dihapus"
+        }
+    }
+
+    fun addTrackToPlaylist(playlistId: Long, track: LocalTrack) {
+        viewModelScope.launch {
+            repository.addTrackToPlaylist(playlistId, track.trackHash)
+            _statusMessage.value = "Ditambahkan ke playlist"
+        }
+    }
+
+    fun removeTrackFromPlaylist(playlistId: Long, trackHash: String) {
+        viewModelScope.launch {
+            repository.removeTrackFromPlaylist(playlistId, trackHash)
+        }
+    }
+
+    // --- Custom Track Cover ---
+    fun updateTrackCustomCover(trackHash: String, sourceUri: Uri) {
+        viewModelScope.launch {
+            val savedPath = coverStorage.saveCustomCover(sourceUri, "trk_$trackHash")
+            if (savedPath != null) {
+                repository.setTrackCustomCover(trackHash, savedPath)
+                _statusMessage.value = "Foto sampul musik diperbarui"
+            } else {
+                _statusMessage.value = "Gagal memuat gambar"
+            }
+        }
+    }
+
+    fun resetTrackCustomCover(trackHash: String) {
+        viewModelScope.launch {
+            repository.clearTrackCustomCover(trackHash)
+            _statusMessage.value = "Sampul dikembalikan ke bawaan"
+        }
+    }
+
+    // --- Transcripts & Export ---
     fun saveTranscriptText(rawText: String) {
         val track = _currentTrack.value ?: return
         viewModelScope.launch {
             repository.saveTranscriptFromRaw(track.trackHash, rawText)
-            _statusMessage.value = "Transkrip berhasil disimpan"
+            _statusMessage.value = "Lirik / transkrip disimpan"
         }
     }
 

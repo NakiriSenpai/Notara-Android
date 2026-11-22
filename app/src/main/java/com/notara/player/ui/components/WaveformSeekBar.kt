@@ -29,7 +29,7 @@ fun WaveformSeekBar(
     modifier: Modifier = Modifier
 ) {
     val playedColor = MaterialTheme.colorScheme.primary
-    val unplayedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
+    val unplayedColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.34f)
     val playheadColor = MaterialTheme.colorScheme.onBackground
     val safeDuration = durationMs.coerceAtLeast(1L)
     val progress = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
@@ -38,11 +38,10 @@ fun WaveformSeekBar(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(92.dp)
+            .height(78.dp)
             .pointerInput(markers, safeDuration) {
                 detectTapGestures { offset ->
                     val width = size.width.toFloat().coerceAtLeast(1f)
-                    // Cek apakah tap mengenai pin penanda (toleransi 26 px)
                     val hitMarker = markers.minByOrNull { marker ->
                         val mx = (marker.timestampMs.toFloat() / safeDuration) * width
                         abs(offset.x - mx)
@@ -69,17 +68,16 @@ fun WaveformSeekBar(
     ) {
         val w = size.width
         val h = size.height
-        val topPadding = 24f // Ruang untuk kepala pin ala SoundCloud
-        val waveHeight = h - topPadding - 8f
+        val topPadding = 22f
+        val waveHeight = h - topPadding - 6f
         val centerY = topPadding + waveHeight / 2f
 
         val slotWidth = w / bars.size
-        val barWidth = (slotWidth * 0.62f).coerceAtLeast(2f)
+        val barWidth = (slotWidth * 0.58f).coerceAtLeast(2f)
 
-        // 1. Gambar batang waveform
         bars.forEachIndexed { index, amp ->
             val x = index * slotWidth + (slotWidth - barWidth) / 2f
-            val barH = (amp * waveHeight).coerceAtLeast(6f)
+            val barH = (amp * waveHeight).coerceAtLeast(5f)
             val isPlayed = (index.toFloat() / bars.size) <= progress
             drawRoundRect(
                 color = if (isPlayed) playedColor else unplayedColor,
@@ -89,38 +87,43 @@ fun WaveformSeekBar(
             )
         }
 
-        // 2. Gambar garis playhead aktif
         val playheadX = progress * w
         drawLine(
-            color = playheadColor,
-            start = Offset(playheadX, topPadding - 4f),
+            color = playheadColor.copy(alpha = 0.85f),
+            start = Offset(playheadX, topPadding - 2f),
             end = Offset(playheadX, h - 4f),
-            strokeWidth = 3f
+            strokeWidth = 2.5f
         )
 
-        // 3. Gambar pin penanda waktu ala SoundCloud
         markers.forEach { marker ->
             val mx = ((marker.timestampMs.toFloat() / safeDuration).coerceIn(0f, 1f)) * w
             val pinColor = parseHexColor(marker.colorHex)
             val isSelected = marker.id == selectedMarkerId
-            val headRadius = if (isSelected) 9.5f else 7f
+            val headRadius = if (isSelected) 9f else 6.5f
 
             drawLine(
                 color = pinColor,
-                start = Offset(mx, 14f),
-                end = Offset(mx, h - 6f),
-                strokeWidth = if (isSelected) 3.5f else 2.2f
+                start = Offset(mx, 12f),
+                end = Offset(mx, h - 4f),
+                strokeWidth = if (isSelected) 3f else 2f
             )
+            if (isSelected) {
+                drawCircle(
+                    color = pinColor.copy(alpha = 0.28f),
+                    radius = 15f,
+                    center = Offset(mx, 11f)
+                )
+            }
             drawCircle(
                 color = pinColor,
                 radius = headRadius,
-                center = Offset(mx, 12f)
+                center = Offset(mx, 11f)
             )
             if (isSelected) {
                 drawCircle(
                     color = Color.White,
-                    radius = 3.2f,
-                    center = Offset(mx, 12f)
+                    radius = 3f,
+                    center = Offset(mx, 11f)
                 )
             }
         }
@@ -130,5 +133,5 @@ fun WaveformSeekBar(
 fun parseHexColor(hex: String): Color {
     return runCatching {
         Color(android.graphics.Color.parseColor(hex))
-    }.getOrDefault(Color(0xFFF59E0B))
+    }.getOrDefault(Color(0xFFE8A864))
 }

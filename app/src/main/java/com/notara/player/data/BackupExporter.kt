@@ -6,7 +6,7 @@ import com.notara.player.data.db.TrackMarkerEntity
 
 data class MarkerBackupPayload(
     val app: String = "Notara",
-    val version: Int = 1,
+    val version: Int = 2,
     val trackTitle: String,
     val trackHash: String,
     val markers: List<MarkerBackupItem>
@@ -14,8 +14,10 @@ data class MarkerBackupPayload(
 
 data class MarkerBackupItem(
     val timestampMs: Long,
-    val comment: String,
-    val colorHex: String
+    val title: String? = null,
+    val description: String? = null,
+    val comment: String? = null,
+    val colorHex: String = "#E8A864"
 )
 
 object BackupExporter {
@@ -32,7 +34,8 @@ object BackupExporter {
             markers = markers.map {
                 MarkerBackupItem(
                     timestampMs = it.timestampMs,
-                    comment = it.comment,
+                    title = it.title,
+                    description = it.description,
                     colorHex = it.colorHex
                 )
             }
@@ -42,12 +45,17 @@ object BackupExporter {
 
     fun importMarkersFromJson(json: String, targetTrackHash: String): List<TrackMarkerEntity> {
         val payload = gson.fromJson(json, MarkerBackupPayload::class.java) ?: return emptyList()
-        return payload.markers.map {
+        return payload.markers.map { item ->
+            val resolvedTitle = item.title?.takeIf { it.isNotBlank() }
+                ?: item.comment?.takeIf { it.isNotBlank() }
+                ?: "Penanda"
+            val resolvedDesc = item.description ?: ""
             TrackMarkerEntity(
                 trackHash = targetTrackHash,
-                timestampMs = it.timestampMs,
-                comment = it.comment,
-                colorHex = it.colorHex.ifBlank { "#F59E0B" }
+                timestampMs = item.timestampMs,
+                title = resolvedTitle,
+                description = resolvedDesc,
+                colorHex = item.colorHex.ifBlank { "#E8A864" }
             )
         }
     }

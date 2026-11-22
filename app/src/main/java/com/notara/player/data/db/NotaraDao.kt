@@ -61,4 +61,39 @@ interface NotaraDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveWaveform(entity: TrackWaveformEntity)
+
+    // --- Playlists ---
+    @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
+    fun observePlaylists(): Flow<List<PlaylistEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaylist(playlist: PlaylistEntity): Long
+
+    @Update
+    suspend fun updatePlaylist(playlist: PlaylistEntity)
+
+    @Query("DELETE FROM playlists WHERE id = :playlistId")
+    suspend fun deletePlaylistById(playlistId: Long)
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
+    suspend fun clearPlaylistTracks(playlistId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addTrackToPlaylist(ref: PlaylistTrackCrossRef)
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId AND trackHash = :trackHash")
+    suspend fun removeTrackFromPlaylist(playlistId: Long, trackHash: String)
+
+    @Query("SELECT * FROM playlist_tracks ORDER BY addedAt ASC")
+    fun observeAllPlaylistRefs(): Flow<List<PlaylistTrackCrossRef>>
+
+    // --- Custom Track Covers ---
+    @Query("SELECT * FROM track_custom_covers")
+    fun observeAllCustomCovers(): Flow<List<TrackCustomCoverEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveTrackCustomCover(entity: TrackCustomCoverEntity)
+
+    @Query("DELETE FROM track_custom_covers WHERE trackHash = :trackHash")
+    suspend fun deleteTrackCustomCover(trackHash: String)
 }
