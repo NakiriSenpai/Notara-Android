@@ -1,13 +1,16 @@
-name: Build Notara APK
+name: Build & Publish Notara APK
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-apk:
-    name: Compile Notara-v5.0.0.apk
+  build-and-release:
+    name: Build & Auto-Release Notara APK
     runs-on: ubuntu-latest
 
     steps:
@@ -25,17 +28,32 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Baca versionName dari app/build.gradle.kts
+        id: version
+        run: |
+          VER=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n 1)
+          echo "name=${VER:-5.0.0}" >> $GITHUB_OUTPUT
+
       - name: Build Optimized 60fps APK
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Rename APK menjadi Notara-v5.0.0.apk
+      - name: Rename APK menjadi Notara-v${{ steps.version.outputs.name }}.apk
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk dist/Notara-v5.0.0.apk
+          cp app/build/outputs/apk/release/app-release.apk "dist/Notara-v${{ steps.version.outputs.name }}.apk"
 
-      - name: Upload Notara-v5.0.0.apk
+      - name: Upload Artifact Cadangan
         uses: actions/upload-artifact@v4
         with:
-          name: Notara-v5.0.0-APK
-          path: dist/Notara-v5.0.0.apk
+          name: Notara-v${{ steps.version.outputs.name }}-APK
+          path: dist/Notara-v${{ steps.version.outputs.name }}.apk
           retention-days: 30
+
+      - name: Publish otomatis ke GitHub Releases (sinkron dengan Website Cloudflare Pages)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: Notara v${{ steps.version.outputs.name }}
+          make_latest: true
+          files: dist/Notara-v${{ steps.version.outputs.name }}.apk
+          generate_release_notes: true
