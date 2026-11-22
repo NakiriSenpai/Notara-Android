@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-apk:
-    name: Compile Optimized 60fps APK
+    name: Compile Notara-v5.0.0.apk
     runs-on: ubuntu-latest
 
     steps:
@@ -25,12 +25,17 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build Optimized Release APK (60fps)
+      - name: Build Optimized 60fps APK
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Upload Notara 60fps APK
+      - name: Rename APK menjadi Notara-v5.0.0.apk
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/Notara-v5.0.0.apk
+
+      - name: Upload Notara-v5.0.0.apk
         uses: actions/upload-artifact@v4
         with:
-          name: Notara-60fps-APK
-          path: app/build/outputs/apk/release/app-release.apk
+          name: Notara-v5.0.0-APK
+          path: dist/Notara-v5.0.0.apk
           retention-days: 30
