@@ -29,6 +29,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
@@ -40,9 +41,12 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+/**
+ * Logo Notara: Batang waveform yang membentuk siluet tegas huruf "N" + titik pin di kanan atas.
+ */
 @Composable
 fun NotaraBrandIcon(
-    size: Dp = 34.dp,
+    size: Dp = 36.dp,
     modifier: Modifier = Modifier
 ) {
     val bg = MaterialTheme.colorScheme.primary
@@ -54,28 +58,43 @@ fun NotaraBrandIcon(
             color = bg,
             cornerRadius = CornerRadius(w * 0.28f, w * 0.28f)
         )
-        val heights = listOf(0.22f, 0.42f, 0.58f, 0.36f, 0.52f, 0.26f)
-        val barW = w * 0.075f
-        val gap = w * 0.055f
-        val totalW = heights.size * barW + (heights.size - 1) * gap
-        val startX = (w - totalW) / 2f
-        val centerY = h * 0.54f
 
-        heights.forEachIndexed { idx, frac ->
-            val bh = h * frac
+        // (topFrac, bottomFrac) membentuk huruf N secara tegas!
+        val bars = listOf(
+            0.26f to 0.78f, // Pilar kiri N
+            0.31f to 0.56f, // Diagonal 1
+            0.40f to 0.64f, // Diagonal 2
+            0.48f to 0.71f, // Diagonal 3
+            0.55f to 0.78f, // Diagonal 4
+            0.34f to 0.78f  // Pilar kanan N
+        )
+        val barW = w * 0.088f
+        val gap = w * 0.044f
+        val totalW = bars.size * barW + (bars.size - 1) * gap
+        val startX = (w - totalW) / 2f
+
+        bars.forEachIndexed { idx, (topF, botF) ->
             val x = startX + idx * (barW + gap)
+            val topY = h * topF
+            val barH = h * (botF - topF)
             drawRoundRect(
                 color = fg,
-                topLeft = Offset(x, centerY - bh / 2f),
-                size = Size(barW, bh),
+                topLeft = Offset(x, topY),
+                size = Size(barW, barH),
                 cornerRadius = CornerRadius(barW / 2f, barW / 2f)
             )
         }
-        val pinX = startX + 4 * (barW + gap) + barW / 2f
-        drawCircle(color = fg, radius = w * 0.065f, center = Offset(pinX, h * 0.20f))
+        // Titik pin di atas pilar kanan N
+        val pinX = startX + 5 * (barW + gap) + barW / 2f
+        drawCircle(color = fg, radius = w * 0.068f, center = Offset(pinX, h * 0.21f))
     }
 }
 
+/**
+ * Lingkaran progres bergelombang HALUS ORGANIK (Material 3 Expressive).
+ * Menggunakan 200 titik resolusi tinggi + quadratic smoothing & StrokeJoin.Round
+ * sehingga licin sempurna seperti kelopak gelombang, tidak patah-patah.
+ */
 @Composable
 fun WavyCircularProgressRing(
     positionMsFlow: StateFlow<Long>,
@@ -86,9 +105,9 @@ fun WavyCircularProgressRing(
     content: @Composable () -> Unit
 ) {
     val pos by positionMsFlow.collectAsStateWithLifecycle()
-    val progress = (pos.toFloat() / durationMs.coerceAtLeast(1L).toFloat()).coerceIn(0.04f, 1f)
+    val progress = (pos.toFloat() / durationMs.coerceAtLeast(1L).toFloat()).coerceIn(0.03f, 1f)
     val accent = MaterialTheme.colorScheme.primary
-    val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.24f)
+    val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f)
 
     val phase = if (isPlaying) {
         val transition = rememberInfiniteTransition(label = "wavy_circle")
@@ -96,7 +115,7 @@ fun WavyCircularProgressRing(
             initialValue = 0f,
             targetValue = (2.0 * PI).toFloat(),
             animationSpec = infiniteRepeatable(
-                animation = tween(1800, easing = LinearEasing),
+                animation = tween(2200, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart
             ),
             label = "phase"
@@ -111,45 +130,60 @@ fun WavyCircularProgressRing(
         Canvas(modifier = Modifier.size(ringSize)) {
             val cx = size.width / 2f
             val cy = size.height / 2f
-            val baseRadius = size.minDimension / 2f - 4.5f
-            val strokeW = 3.2.dp.toPx()
+            val strokeW = 2.8.dp.toPx()
+            val waveAmp = if (isPlaying) 1.55.dp.toPx() else 0.75.dp.toPx()
+            val baseRadius = size.minDimension / 2f - strokeW - waveAmp - 1f
 
+            // Track lingkaran halus di belakang
             drawCircle(
                 color = track,
                 radius = baseRadius,
                 center = Offset(cx, cy),
-                style = Stroke(width = strokeW * 0.72f)
+                style = Stroke(width = strokeW * 0.7f)
             )
 
+            // 200 titik resolusi tinggi agar setiap lengkungan gelombang benar-benar licin!
             val sweepRad = (progress * 2.0 * PI).toFloat()
             val startRad = (-PI / 2.0).toFloat()
-            val steps = (progress * 52f).toInt().coerceIn(8, 56)
-            val waveAmp = if (isPlaying) 2.2.dp.toPx() else 1.2.dp.toPx()
-            val waveFreq = 10f
+            val steps = (progress * 200f).toInt().coerceIn(24, 220)
+            val waveFreq = 12f
 
             val path = Path()
+            var prevX = 0f
+            var prevY = 0f
             for (i in 0..steps) {
                 val frac = i.toFloat() / steps.toFloat()
                 val angle = startRad + frac * sweepRad
-                val r = baseRadius + waveAmp * sin(angle * waveFreq + phase)
+                // Taper lembut di ujung awal & akhir agar sambungan gelombang halus
+                val edgeTaper = sin(frac * PI).toFloat().coerceIn(0.15f, 1f)
+                val r = baseRadius + (waveAmp * edgeTaper) * sin(angle * waveFreq + phase)
                 val x = cx + r * cos(angle)
                 val y = cy + r * sin(angle)
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                if (i == 0) {
+                    path.moveTo(x, y)
+                } else {
+                    val midX = (prevX + x) * 0.5f
+                    val midY = (prevY + y) * 0.5f
+                    path.quadraticTo(prevX, prevY, midX, midY)
+                }
+                prevX = x
+                prevY = y
             }
+            path.lineTo(prevX, prevY)
 
             drawPath(
                 path = path,
                 color = accent,
-                style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                style = Stroke(
+                    width = strokeW,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
             )
         }
     }
 }
 
-/**
- * Desain 17: Real Mini Audio Waveform Progress Bar (36 batang vertikal amber -> sakura)
- * dengan denyut halus 60fps pada batang aktif saat diputar + durasi musik (01:24 / 04:12).
- */
 @Composable
 fun MiniWaveformProgressBar(
     amplitudes: List<Float>,
@@ -168,7 +202,6 @@ fun MiniWaveformProgressBar(
     val playedColor = MaterialTheme.colorScheme.primary
     val unplayedColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.36f)
 
-    // Downsample waveform asli lagu (68 bar -> 36 bar rapi), atau bentuk akustik halus jika belum dimuat
     val bars = remember(amplitudes, isActiveTrack) {
         val targetCount = 36
         if (isActiveTrack && amplitudes.size >= targetCount) {
@@ -178,7 +211,6 @@ fun MiniWaveformProgressBar(
                 amplitudes[idx].coerceIn(0.16f, 1.0f)
             }
         } else {
-            // Pola akustik harmonis sementara sebelum lagu aktif diputar
             List(targetCount) { i ->
                 val env = sin((i.toFloat() / (targetCount - 1)) * PI).toFloat()
                 val ripple = 0.55f + 0.45f * sin(i * 0.85f)
@@ -190,8 +222,8 @@ fun MiniWaveformProgressBar(
     val pulse = if (isActiveTrack && isPlaying) {
         val transition = rememberInfiniteTransition(label = "wf_pulse")
         val p by transition.animateFloat(
-            initialValue = 0.82f,
-            targetValue = 1.15f,
+            initialValue = 0.84f,
+            targetValue = 1.14f,
             animationSpec = infiniteRepeatable(
                 animation = tween(420, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
@@ -243,20 +275,9 @@ fun MiniWaveformProgressBar(
 
         Spacer(Modifier.height(6.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = formatTimeMs(displayPos),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = formatTimeMs(durationMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTimeMs(displayPos), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(formatTimeMs(durationMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

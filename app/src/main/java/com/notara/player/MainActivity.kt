@@ -1,6 +1,9 @@
 package com.notara.player
 
 import android.Manifest
+import android.app.Activity
+import android.provider.MediaStore
+import androidx.activity.result.IntentSenderRequest
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.os.Build
@@ -47,6 +50,8 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -174,7 +179,7 @@ private fun NotaraRoot(viewModel: MainViewModel) {
     val currentTrack by viewModel.currentTrack.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
     val shuffleEnabled by viewModel.shuffleEnabled.collectAsStateWithLifecycle()
-    val repeatOneEnabled by viewModel.repeatOneEnabled.collectAsStateWithLifecycle()
+    val repeatMode by viewModel.repeatMode.collectAsStateWithLifecycle()
     val abLoop by viewModel.abLoop.collectAsStateWithLifecycle()
     val durationMs by viewModel.durationMs.collectAsStateWithLifecycle()
     val waveformBars by viewModel.waveformBars.collectAsStateWithLifecycle()
@@ -193,6 +198,8 @@ private fun NotaraRoot(viewModel: MainViewModel) {
     var showThemePicker by remember { mutableStateOf(false) }
     var showLanguagePicker by remember { mutableStateOf(false) }
     var pendingPhotoTarget by remember { mutableStateOf<PhotoPickTarget?>(null) }
+    var editingMetadataTrack by remember { mutableStateOf<LocalTrack?>(null) }
+    var pendingMetaWrite by remember { mutableStateOf<Triple<LocalTrack, String, String>?>(null) }
     var dynamicSeed by remember { mutableStateOf(Color(0xFFE8A864)) }
 
     // Sistem Back HP berurutan: Sheet -> Player -> Playlist Detail -> Search/Playlist Tab -> Home -> Exit
@@ -237,6 +244,28 @@ private fun NotaraRoot(viewModel: MainViewModel) {
         statusMessage?.let { msg ->
             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             viewModel.consumeStatusMessage()
+        }
+    }
+
+    val writeRequestLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val pending = pendingMetaWrite
+        pendingMetaWrite = null
+        if (result.resultCode == Activity.RESULT_OK && pending != null) {
+            viewModel.saveEditedTrackMetadata(pending.first, pending.second, pending.third)
+        } else if (pending != null) {
+            Toast.makeText(context, "Izin ubah file asli dibatalkan", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun requestDirectFileTagEdit(track: LocalTrack, newTitle: String, newArtist: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            pendingMetaWrite = Triple(track, newTitle, newArtist)
+            val pi = MediaStore.createWriteRequest(context.contentResolver, listOf(track.contentUri))
+            writeRequestLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+        } else {
+            viewModel.saveEditedTrackMetadata(track, newTitle, newArtist)
         }
     }
 
@@ -326,7 +355,7 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                 playlists = playlists,
                                 isPlaying = isPlaying,
                                 shuffleEnabled = shuffleEnabled,
-                                repeatOneEnabled = repeatOneEnabled,
+                                repeatMode = repeatMode,
                                 abLoop = abLoop,
                                 positionMsFlow = viewModel.currentPositionMs,
                                 durationMs = durationMs,
@@ -339,7 +368,9 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                 onToggleFavorite = { viewModel.toggleFavoriteTrack(activeTrack.trackHash) },
                                 onTogglePlayPause = viewModel::togglePlayPause,
                                 onToggleShuffle = viewModel::toggleShuffle,
-                                onToggleRepeatOne = viewModel::toggleRepeatOne,
+                                onCycleRepeatMode = viewModel::cycleRepeatMode,
+                                onSeekDelta = viewModel::seekByDelta,
+                                onEditTrackMetadata = { editingMetadataTrack = activeTrack },
                                 onCycleAbLoop = viewModel::cycleAbLoop,
                                 onJumpQueueIndex = viewModel::jumpToQueueIndex,
                                 onSeek = viewModel::seekTo,
@@ -384,6 +415,8 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                                     isHeroCurrentlyPlaying = heroTrack != null && heroTrack.trackHash == currentTrack?.trackHash,
                                                     positionMsFlow = viewModel.currentPositionMs,
                                                     durationMs = durationMs,
+                                                    favoriteCount = favoriteHashes.size,
+                                                    totalTrackCount = allVisibleTracks.size,
                                                     recentlyPlayed = recentlyPlayed,
                                                     fallbackTracks = allVisibleTracks,
                                                     playlists = playlists,
@@ -399,6 +432,21 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                                         else viewModel.playTrack(t, allVisibleTracks)
                                                     },
                                                     onHeroSeek = viewModel::seekTo,
+                                                    onQuickShuffleAll = {
+                                                        if (allVisibleTracks.isNotEmpty()) {
+                                                            val shuffled = allVisibleTracks.shuffled()
+                                                            viewModel.playTrack(shuffled.first(), shuffled)
+                                                            showPlayerScreen = true
+                                                        }
+                                                    },
+                                                    onQuickOpenFavorites = {
+                                                        if (!favoritesOnly) viewModel.toggleFavoritesOnly()
+                                                        bottomTab = 1
+                                                    },
+                                                    onQuickOpenLibrary = {
+                                                        if (favoritesOnly) viewModel.toggleFavoritesOnly()
+                                                        bottomTab = 1
+                                                    },
                                                     onTrackClick = { t, q ->
                                                         viewModel.playTrack(t, q)
                                                         showPlayerScreen = true
@@ -435,6 +483,7 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                                     viewModel.playTrack(t, q)
                                                     showPlayerScreen = true
                                                 },
+                                                onEditTrackMetadata = { t -> editingMetadataTrack = t },
                                                 onPickTrackCover = { t ->
                                                     pendingPhotoTarget = PhotoPickTarget.TrackCover(t.trackHash)
                                                     photoPickerLauncher.launch("image/*")
@@ -465,6 +514,13 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                                                 onTrackClick = { t, q ->
                                                     viewModel.playTrack(t, q)
                                                     showPlayerScreen = true
+                                                },
+                                                onShufflePlaylist = { list ->
+                                                    val shuffled = list.shuffled()
+                                                    shuffled.firstOrNull()?.let {
+                                                        viewModel.playTrack(it, shuffled)
+                                                        showPlayerScreen = true
+                                                    }
                                                 },
                                                 onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist
                                             )
@@ -585,6 +641,49 @@ private fun NotaraRoot(viewModel: MainViewModel) {
                         currentLanguage = language,
                         onSelect = viewModel::selectLanguage,
                         onDismiss = { showLanguagePicker = false }
+                    )
+                }
+
+                // Dialog Edit Judul & Artis (tersimpan langsung ke file asli MP3 + MediaStore!)
+                val metaTrack = editingMetadataTrack
+                if (metaTrack != null) {
+                    var titleInput by remember(metaTrack) { mutableStateOf(metaTrack.title) }
+                    var artistInput by remember(metaTrack) { mutableStateOf(metaTrack.artist) }
+                    AlertDialog(
+                        onDismissRequest = { editingMetadataTrack = null },
+                        title = { Text("Edit Judul & Artis (File Asli)") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    text = "Perubahan akan ditulis langsung ke tag file audio asli dan MediaStore Android.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                OutlinedTextField(
+                                    value = titleInput,
+                                    onValueChange = { titleInput = it },
+                                    label = { Text("Judul Lagu") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = artistInput,
+                                    onValueChange = { artistInput = it },
+                                    label = { Text("Nama Artis") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(onClick = {
+                                editingMetadataTrack = null
+                                requestDirectFileTagEdit(metaTrack, titleInput, artistInput)
+                            }) { Text(strings.saveBtn) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { editingMetadataTrack = null }) { Text(strings.cancelBtn) }
+                        }
                     )
                 }
 

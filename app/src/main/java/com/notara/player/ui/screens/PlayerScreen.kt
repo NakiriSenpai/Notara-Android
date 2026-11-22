@@ -41,6 +41,8 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Loop
@@ -96,6 +98,7 @@ import com.notara.player.data.db.TrackTranscriptEntity
 import com.notara.player.data.model.AudioEffectsState
 import com.notara.player.data.model.LocalTrack
 import com.notara.player.ui.AbLoopState
+import com.notara.player.ui.NotaraRepeatMode
 import com.notara.player.ui.components.CozyArtwork
 import com.notara.player.ui.components.WaveformSeekBar
 import com.notara.player.ui.components.parseHexColor
@@ -116,7 +119,7 @@ fun PlayerScreen(
     playlists: List<PlaylistEntity>,
     isPlaying: Boolean,
     shuffleEnabled: Boolean,
-    repeatOneEnabled: Boolean,
+    repeatMode: NotaraRepeatMode,
     abLoop: AbLoopState,
     positionMsFlow: StateFlow<Long>,
     durationMs: Long,
@@ -129,7 +132,9 @@ fun PlayerScreen(
     onToggleFavorite: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onToggleShuffle: () -> Unit,
-    onToggleRepeatOne: () -> Unit,
+    onCycleRepeatMode: () -> Unit,
+    onSeekDelta: (Long) -> Unit,
+    onEditTrackMetadata: () -> Unit,
     onCycleAbLoop: () -> Unit,
     onJumpQueueIndex: (Int) -> Unit,
     onSeek: (Long) -> Unit,
@@ -232,6 +237,11 @@ fun PlayerScreen(
                                     text = { Text(strings.effectsTitle) },
                                     leadingIcon = { Icon(Icons.Rounded.Tune, null) },
                                     onClick = { showMoreMenu = false; onOpenEffects() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Edit Judul & Artis (File Asli)") },
+                                    leadingIcon = { Icon(Icons.Rounded.Edit, null) },
+                                    onClick = { showMoreMenu = false; onEditTrackMetadata() }
                                 )
                                 DropdownMenuItem(
                                     text = { Text(strings.changeTrackPhoto) },
@@ -442,35 +452,77 @@ fun PlayerScreen(
                     IconButton(onClick = onSkipNext) {
                         Icon(Icons.Rounded.SkipNext, contentDescription = null, modifier = Modifier.size(30.dp))
                     }
-                    IconButton(onClick = onToggleRepeatOne) {
-                        Icon(
-                            imageVector = if (repeatOneEnabled) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                            contentDescription = "Repeat",
-                            tint = if (repeatOneEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(onClick = onCycleRepeatMode, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                imageVector = if (repeatMode == NotaraRepeatMode.ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                                contentDescription = "Repeat",
+                                tint = if (repeatMode != NotaraRepeatMode.OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        if (repeatMode != NotaraRepeatMode.OFF) {
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
                     }
                 }
 
-                // Header Daftar Pin + Tombol + Pin
+                // Baris Cepat: -10s | +10s | Jumlah Pin | + Pin
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(strings.pinsCount(markers.size), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
-                        modifier = Modifier.clickable { showAddMarkerDialog = true }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                            modifier = Modifier.clickable { onSeekDelta(-10_000L) }
                         ) {
-                            Icon(Icons.Rounded.Add, null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-                            Text(strings.pinBtn, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(Icons.Rounded.Replay10, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text("-10s", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                            modifier = Modifier.clickable { onSeekDelta(10_000L) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(Icons.Rounded.Forward10, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text("+10s", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(strings.pinsCount(markers.size), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                            modifier = Modifier.clickable { showAddMarkerDialog = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(Icons.Rounded.Add, null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text(strings.pinBtn, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -478,7 +530,22 @@ fun PlayerScreen(
                 // Daftar Judul Pin di Bawah
                 if (markers.isEmpty()) {
                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text(strings.noPinsHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(18.dp))
+                                .clickable { showAddMarkerDialog = true }
+                        ) {
+                            Text(
+                                text = strings.noPinsHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp)
+                            )
+                        }
                     }
                 } else {
                     LazyColumn(

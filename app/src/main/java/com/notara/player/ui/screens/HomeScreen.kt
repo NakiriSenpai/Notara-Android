@@ -22,9 +22,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,6 +58,8 @@ fun HomeScreen(
     isHeroCurrentlyPlaying: Boolean,
     positionMsFlow: StateFlow<Long>,
     durationMs: Long,
+    favoriteCount: Int,
+    totalTrackCount: Int,
     recentlyPlayed: List<LocalTrack>,
     fallbackTracks: List<LocalTrack>,
     playlists: List<PlaylistEntity>,
@@ -63,6 +69,9 @@ fun HomeScreen(
     onHeroCardClick: (LocalTrack) -> Unit,
     onHeroPlayPause: (LocalTrack) -> Unit,
     onHeroSeek: (Long) -> Unit,
+    onQuickShuffleAll: () -> Unit,
+    onQuickOpenFavorites: () -> Unit,
+    onQuickOpenLibrary: () -> Unit,
     onTrackClick: (LocalTrack, List<LocalTrack>) -> Unit,
     onPlaylistClick: (PlaylistEntity) -> Unit,
     onCreatePlaylistClick: () -> Unit
@@ -70,14 +79,25 @@ fun HomeScreen(
     val strings = LocalNotaraStrings.current
     val recentList = if (recentlyPlayed.isNotEmpty()) recentlyPlayed else fallbackTracks.take(10)
 
+    // Pendar lampu amber hangat Tokyo Midnight di bagian atas agar halaman tidak polos/flat
+    val ambientTopGlow = Brush.verticalGradient(
+        colorStops = arrayOf(
+            0.00f to MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+            0.28f to MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+            0.55f to MaterialTheme.colorScheme.background,
+            1.00f to MaterialTheme.colorScheme.background
+        )
+    )
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp)
+            .background(MaterialTheme.colorScheme.background)
+            .background(ambientTopGlow),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 114.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // 1. Top Header: Icon 01 + Notara (kiri) | Tombol Settings (kanan)
+        // 1. Top Header: Logo Huruf N Waveform + Notara | Tombol Settings
         item {
             Row(
                 modifier = Modifier
@@ -87,7 +107,7 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    NotaraBrandIcon(size = 34.dp)
+                    NotaraBrandIcon(size = 36.dp)
                     Spacer(Modifier.width(10.dp))
                     Text(
                         text = "Notara",
@@ -98,26 +118,24 @@ fun HomeScreen(
                 }
                 Surface(
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f)
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                    modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), CircleShape)
                 ) {
                     IconButton(onClick = onOpenSettings, modifier = Modifier.size(40.dp)) {
-                        Icon(
-                            imageVector = Icons.Rounded.Settings,
-                            contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        Icon(Icons.Rounded.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
         }
 
-        // 2. Hero Card Desain 17 + Tombol Play di Kanan Atas + Real Mini Waveform + Durasi
+        // 2. Hero Card Desain 17 (Cover kiri, Judul/Artis, Play Kanan Atas, Real Mini Waveform + Durasi)
         if (heroTrack != null) {
             item {
-                val cardGradient = Brush.verticalGradient(
+                val cardGradient = Brush.linearGradient(
                     colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                        MaterialTheme.colorScheme.surfaceVariant
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                        MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f)
                     )
                 )
                 Box(
@@ -127,20 +145,12 @@ fun HomeScreen(
                         .clip(RoundedCornerShape(24.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .background(cardGradient)
-                        .border(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
-                            RoundedCornerShape(24.dp)
-                        )
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.34f), RoundedCornerShape(24.dp))
                         .clickable { onHeroCardClick(heroTrack) }
                         .padding(16.dp)
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        // Baris Atas: Foto Cover Kiri | Judul & Artis Tengah | Tombol Play Kanan Atas
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             CozyArtwork(
                                 customCoverPath = customCovers[heroTrack.trackHash],
                                 albumArtUri = heroTrack.albumArtUri,
@@ -172,9 +182,7 @@ fun HomeScreen(
                                 shape = CircleShape,
                                 color = MaterialTheme.colorScheme.primary,
                                 shadowElevation = 4.dp,
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clickable { onHeroPlayPause(heroTrack) }
+                                modifier = Modifier.size(44.dp).clickable { onHeroPlayPause(heroTrack) }
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -189,7 +197,6 @@ fun HomeScreen(
 
                         Spacer(Modifier.height(14.dp))
 
-                        // Baris Bawah: Desain 17 — 36-Bar Real Mini Audio Waveform + Durasi (01:24 / 04:12)
                         MiniWaveformProgressBar(
                             amplitudes = waveformBars,
                             positionMsFlow = positionMsFlow,
@@ -203,7 +210,39 @@ fun HomeScreen(
             }
         }
 
-        // 3. Recently Played Horizontal Carousel
+        // 3. Quick Cozy Action Strip (mengisi Home agar kaya & fungsional)
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                HomeQuickTile(
+                    icon = Icons.Rounded.Shuffle,
+                    title = "Acak",
+                    subtitle = "$totalTrackCount lagu",
+                    onClick = onQuickShuffleAll,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeQuickTile(
+                    icon = Icons.Rounded.Favorite,
+                    title = "Favorit",
+                    subtitle = "$favoriteCount lagu",
+                    onClick = onQuickOpenFavorites,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeQuickTile(
+                    icon = Icons.Rounded.LibraryMusic,
+                    title = strings.allSongs,
+                    subtitle = "Jelajahi",
+                    onClick = onQuickOpenLibrary,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // 4. Recently Played Horizontal Carousel
         if (recentList.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -219,9 +258,7 @@ fun HomeScreen(
                     ) {
                         items(recentList, key = { it.trackHash }) { track ->
                             Column(
-                                modifier = Modifier
-                                    .width(106.dp)
-                                    .clickable { onTrackClick(track, recentList) }
+                                modifier = Modifier.width(106.dp).clickable { onTrackClick(track, recentList) }
                             ) {
                                 CozyArtwork(
                                     customCoverPath = customCovers[track.trackHash],
@@ -231,20 +268,8 @@ fun HomeScreen(
                                     cornerDp = 18
                                 )
                                 Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = track.title,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = track.artist,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Text(track.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(track.artist, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -252,7 +277,7 @@ fun HomeScreen(
             }
         }
 
-        // 4. Playlists Horizontal Photo Cards
+        // 5. Playlists Horizontal Photo Cards
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
@@ -269,9 +294,10 @@ fun HomeScreen(
                         val count = playlistTrackMap[pl.id]?.size ?: 0
                         Surface(
                             shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f),
                             modifier = Modifier
                                 .width(126.dp)
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), RoundedCornerShape(18.dp))
                                 .clickable { onPlaylistClick(pl) }
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
@@ -284,18 +310,8 @@ fun HomeScreen(
                                     isPlaylist = true
                                 )
                                 Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = pl.name,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = strings.songsCount(count),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Text(pl.name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(strings.songsCount(count), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -306,11 +322,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .width(114.dp)
                                 .height(166.dp)
-                                .border(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                                    RoundedCornerShape(18.dp)
-                                )
+                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f), RoundedCornerShape(18.dp))
                                 .clickable(onClick = onCreatePlaylistClick)
                         ) {
                             Column(
@@ -326,6 +338,30 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HomeQuickTile(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        modifier = modifier
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp)) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
     }
 }

@@ -12,6 +12,8 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.notara.player.NotaraApp
 import com.notara.player.data.BackupExporter
+import com.notara.player.data.Id3TagWriter
+import com.notara.player.data.TagWriteResult
 import com.notara.player.data.LibraryFilterConfig
 import com.notara.player.data.LibraryFilterPreferences
 import com.notara.player.data.TrackSortMode
@@ -48,6 +50,8 @@ data class DuplicatePlaylistAlert(
     val trackTitle: String,
     val playlistName: String
 )
+
+enum class NotaraRepeatMode { OFF, ALL, ONE }
 
 data class AbLoopState(
     val startMs: Long? = null,
@@ -187,8 +191,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _shuffleEnabled = MutableStateFlow(false)
     val shuffleEnabled: StateFlow<Boolean> = _shuffleEnabled.asStateFlow()
 
-    private val _repeatOneEnabled = MutableStateFlow(false)
-    val repeatOneEnabled: StateFlow<Boolean> = _repeatOneEnabled.asStateFlow()
+    private val _repeatMode = MutableStateFlow(NotaraRepeatMode.OFF)
+    val repeatMode: StateFlow<NotaraRepeatMode> = _repeatMode.asStateFlow()
 
     private val _abLoop = MutableStateFlow(AbLoopState())
     val abLoop: StateFlow<AbLoopState> = _abLoop.asStateFlow()
@@ -271,7 +275,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 val token = SessionToken(app, ComponentName(app, NotaraPlaybackService::class.java))
                 val mc = MediaController.Builder(app, token).buildAsync().await()
-                mc.repeatMode = if (_repeatOneEnabled.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
+                mc.repeatMode = toPlayerRepeatMode(_repeatMode.value)
                 mc.shuffleModeEnabled = _shuffleEnabled.value
                 controller = mc
                 mc.addListener(object : Player.Listener {
@@ -378,7 +382,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 .build()
         }
-        mc.repeatMode = if (_repeatOneEnabled.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
+        mc.repeatMode = toPlayerRepeatMode(_repeatMode.value)
         mc.shuffleModeEnabled = _shuffleEnabled.value
         mc.setMediaItems(mediaItems, startIndex, 0L)
         mc.prepare()
@@ -400,10 +404,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         controller?.shuffleModeEnabled = next
     }
 
-    fun toggleRepeatOne() {
-        val next = !_repeatOneEnabled.value
-        _repeatOneEnabled.value = next
-        controller?.repeatMode = if (next) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_ALL
+    private fun toPlayerRepeatMode(mode: NotaraRepeatMode): Int = when (mode) {
+        NotaraRepeatMode.OFF -> Player.REPEAT_MODE_OFF
+        NotaraRepeatMode.ALL -> Player.REPEAT_MODE_ALL
+        NotaraRepeatMode.ONE -> Player.REPEAT_MODE_ONE
+    }
+
+    /**
+     * Klik 1x = Repeat Playlist (ALL), Klik 2x = Repeat 1 Lagu (ONE), Klik 3x = Repeat Off.
+     */
+    fun cycleRepeatMode() {
+        val next = when (_repeatMode.value) {
+            NotaraRepeatMode.OFF -> NotaraRepeatMode.ALL
+            NotaraRepeatMode.ALL -> NotaraRepeatMode.ONE
+            NotaraRepeatMode.ONE -> NotaraRepeatMode.OFF
+        }
+        _repeatMode.value = next
+        controller?.repeatMode = toPlayerRepeatMode(next)
+        _statusMessage.value = when (next) {
+            NotaraRepeatMode.ALL -> "Repeat Playlist"
+            NotaraRepeatMode.ONE -> "Repeat 1 Lagu"
+            NotaraRepeatMode.OFF -> "Repeat Off"
+        }
+    }
+
+    fun seekByDelta(deltaMs: Long) {
+        val target = (_currentPositionMs.value + deltaMs).coerceIn(0L, _durationMs.value.coerceAtLeast(1L))
+        seekTo(target)
+    }
+
+    fun saveEditedTrackMetadata(track: LocalTrack, newTitle: String, newArtist: String) {
+        viewModelScope.launch {
+            val cleanTitle = newTitle.trim().ifBlank { track.title }
+            val cleanArtist = newArtist.trim().ifBlank { track.artist }
+            when (val res = Id3TagWriter.writeTitleAndArtist(app, track.contentUri, cleanTitle, cleanArtist)) {
+                is TagWriteResult.Success -> {
+                    repository.updateTrackMetadataInCache(track.mediaStoreId, cleanTitle, cleanArtist)
+                    _rawTracks.value = _rawTracks.value.map { item ->
+                        if (item.mediaStoreId == track.mediaStoreId) {
+                            item.copy(title = cleanTitle, artist = cleanArtist)
+                        } else item
+                    }
+                    if (_currentTrack.value?.mediaStoreId == track.mediaStoreId) {
+                        _currentTrack.value = _currentTrack.value?.copy(title = cleanTitle, artist = cleanArtist)
+                    }
+                    _statusMessage.value = if (res.wroteFileTag) {
+                        "Judul & artis disimpan ke file asli"
+                    } else {
+                        "Judul & artis diperbarui di MediaStore"
+                    }
+                }
+                is TagWriteResult.Error -> {
+                    _statusMessage.value = res.message
+                }
+            }
+        }
     }
 
     /**

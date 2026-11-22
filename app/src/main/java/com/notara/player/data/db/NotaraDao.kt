@@ -28,6 +28,9 @@ interface NotaraDao {
         if (tracks.isNotEmpty()) insertCachedTracks(tracks)
     }
 
+    @Query("UPDATE cached_tracks SET title = :title, artist = :artist WHERE mediaStoreId = :mediaStoreId")
+    suspend fun updateCachedTrackMetadata(mediaStoreId: Long, title: String, artist: String)
+
     // --- Markers ---
     @Query("SELECT * FROM track_markers WHERE trackHash = :trackHash ORDER BY timestampMs ASC")
     fun observeMarkers(trackHash: String): Flow<List<TrackMarkerEntity>>

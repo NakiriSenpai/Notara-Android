@@ -4,27 +4,21 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Desain 01: Notara Waveform Pin (Pure Original Vector) -->
-    <!-- Bar 1 -->
-    <path android:fillColor="#E8A864" android:pathData="M24,52 A2,2 0 0,1 28,52 L28,56 A2,2 0 0,1 24,56 Z" />
-    <!-- Bar 2 -->
-    <path android:fillColor="#E8A864" android:pathData="M31,45 A2,2 0 0,1 35,45 L35,63 A2,2 0 0,1 31,63 Z" />
-    <!-- Bar 3 -->
-    <path android:fillColor="#E8A864" android:pathData="M38,38 A2,2 0 0,1 42,38 L42,70 A2,2 0 0,1 38,70 Z" />
-    <!-- Bar 4 (Tall) -->
-    <path android:fillColor="#E8A864" android:pathData="M45,32 A2,2 0 0,1 49,32 L49,76 A2,2 0 0,1 45,76 Z" />
-    <!-- Bar 5 -->
-    <path android:fillColor="#E8A864" android:pathData="M52,41 A2,2 0 0,1 56,41 L56,67 A2,2 0 0,1 52,67 Z" />
-    <!-- Bar 6 -->
-    <path android:fillColor="#E8A864" android:pathData="M59,46 A2,2 0 0,1 63,46 L63,62 A2,2 0 0,1 59,62 Z" />
-    <!-- Bar 7 (Pin Bar) -->
-    <path android:fillColor="#E8A864" android:pathData="M66,40 A2,2 0 0,1 70,40 L70,74 A2,2 0 0,1 66,74 Z" />
-    <!-- Bar 8 -->
-    <path android:fillColor="#E8A864" android:pathData="M73,47 A2,2 0 0,1 77,47 L77,61 A2,2 0 0,1 73,61 Z" />
-    <!-- Bar 9 -->
-    <path android:fillColor="#E8A864" android:pathData="M80,52 A2,2 0 0,1 84,52 L84,56 A2,2 0 0,1 80,56 Z" />
-    <!-- Glowing Pin Halo -->
-    <path android:fillColor="#55FFE5C7" android:pathData="M68,26 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
+    <!-- Notara Letter "N" Waveform + Pin (Pure Original Vector) -->
+    <!-- Kiri: Pilar vertikal huruf N -->
+    <path android:fillColor="#E8A864" android:pathData="M29,34 A3,3 0 0,1 35,34 L35,74 A3,3 0 0,1 29,74 Z" />
+    <!-- Diagonal 1 (atas-kiri) -->
+    <path android:fillColor="#E8A864" android:pathData="M39,38 A2.5,2.5 0 0,1 44,38 L44,58 A2.5,2.5 0 0,1 39,58 Z" />
+    <!-- Diagonal 2 (tengah) -->
+    <path android:fillColor="#E8A864" android:pathData="M48,45 A2.5,2.5 0 0,1 53,45 L53,64 A2.5,2.5 0 0,1 48,64 Z" />
+    <!-- Diagonal 3 (tengah-bawah) -->
+    <path android:fillColor="#E8A864" android:pathData="M57,51 A2.5,2.5 0 0,1 62,51 L62,70 A2.5,2.5 0 0,1 57,70 Z" />
+    <!-- Diagonal 4 (bawah-kanan) -->
+    <path android:fillColor="#E8A864" android:pathData="M66,57 A2.5,2.5 0 0,1 71,57 L71,74 A2.5,2.5 0 0,1 66,74 Z" />
+    <!-- Kanan: Pilar vertikal huruf N -->
+    <path android:fillColor="#E8A864" android:pathData="M75,38 A3,3 0 0,1 81,38 L81,74 A3,3 0 0,1 75,74 Z" />
+    <!-- Glowing Pin Halo di atas pilar kanan N -->
+    <path android:fillColor="#55FFE5C7" android:pathData="M78,27 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
     <!-- Glowing Pin Dot -->
-    <path android:fillColor="#FFF4E4" android:pathData="M68,26 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0" />
+    <path android:fillColor="#FFF4E4" android:pathData="M78,27 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0" />
 </vector>

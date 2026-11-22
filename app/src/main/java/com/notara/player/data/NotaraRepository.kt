@@ -56,6 +56,10 @@ class NotaraRepository(
         return scanned
     }
 
+    suspend fun updateTrackMetadataInCache(mediaStoreId: Long, title: String, artist: String) {
+        dao.updateCachedTrackMetadata(mediaStoreId, title, artist)
+    }
+
     // --- Markers ---
     fun observeMarkers(trackHash: String): Flow<List<TrackMarkerEntity>> = dao.observeMarkers(trackHash)
     suspend fun getMarkersOnce(trackHash: String): List<TrackMarkerEntity> = dao.getMarkersOnce(trackHash)
