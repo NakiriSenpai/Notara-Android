@@ -611,7 +611,7 @@ private fun TranscriptTab(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Belum ada transkrip. Ketuk "Teks" untuk menempel transkrip/lirik manual atau "Impor LRC/SRT" dari penyimpanan lokal.",
+                    text = "Belum ada transkrip. Ketuk 'Teks' untuk menempel transkrip/lirik manual atau 'Impor LRC/SRT' dari penyimpanan lokal.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
